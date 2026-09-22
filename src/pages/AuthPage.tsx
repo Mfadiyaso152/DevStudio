@@ -13,7 +13,8 @@ import {
   ShieldCheck, 
   KeyRound,
   Lock,
-  Smartphone
+  Smartphone,
+  AlertCircle
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AccountType } from '../types';
@@ -23,7 +24,12 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   const { 
     registerUser, 
     loginWithGoogle, 
-    sendFirebaseEmailLink 
+    sendFirebaseEmailLink,
+    isVerifyingEmailLink,
+    emailLinkNeedsEmail,
+    emailLinkError,
+    resetEmailLinkState,
+    completeEmailLinkWithManualEmail
   } = useAuth();
 
   // Wizard Step (1 to 4)
@@ -32,6 +38,8 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   // Auth Choice
   const [authMethod, setAuthMethod] = useState<'google' | 'email'>('email');
   const [email, setEmail] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
+  const [isSubmittingManual, setIsSubmittingManual] = useState(false);
   const [linkSent, setLinkSent] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
@@ -208,7 +216,83 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
           {step === 1 && (
             <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
               
-              {!linkSent ? (
+              {isVerifyingEmailLink ? (
+                /* AUTO-VERIFYING LOADING STATE */
+                <div className="text-center space-y-6 py-6">
+                  <div className="w-16 h-16 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto border border-indigo-500/30">
+                    <Sparkles className="w-8 h-8 text-indigo-400 animate-spin" style={{ animationDuration: '3s' }} />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-black text-white">جاري توثيق تسجيل الدخول...</h2>
+                    <p className="text-xs text-slate-300">تم التعرف على رابط Firebase، جاري تسجيل دخولك تلقائياً دون الحاجة لإعادة التوجيه.</p>
+                  </div>
+                </div>
+              ) : emailLinkNeedsEmail ? (
+                /* MANUAL EMAIL ENTRY FOR DIFFERENT BROWSER */
+                <div className="space-y-6 text-right">
+                  <div className="w-12 h-12 bg-indigo-600/20 rounded-2xl flex items-center justify-center text-indigo-400 border border-indigo-500/30">
+                    <Mail className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-black text-white">إكمال توثيق تسجيل الدخول</h2>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      يبدو أنك فتحت رابط تسجيل الدخول من جهاز أو متصفح مختلف. يرجى إدخال نفس البريد الإلكتروني الذي أُرسل إليه الرابط لإكمال الدخول.
+                    </p>
+                  </div>
+                  <form 
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setIsSubmittingManual(true);
+                      await completeEmailLinkWithManualEmail(manualEmail);
+                      setIsSubmittingManual(false);
+                    }} 
+                    className="space-y-4"
+                  >
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1.5">البريد الإلكتروني للرابط</label>
+                      <input
+                        type="email"
+                        required
+                        value={manualEmail}
+                        onChange={(e) => setManualEmail(e.target.value)}
+                        placeholder="name@example.com"
+                        className="w-full px-4 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-indigo-500 outline-none"
+                        dir="ltr"
+                      />
+                    </div>
+                    {emailLinkError && (
+                      <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 text-center">{emailLinkError}</p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isSubmittingManual}
+                      className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span>{isSubmittingManual ? 'جاري التحقق والتسجيل...' : 'إكمال تسجيل الدخول'}</span>
+                    </button>
+                  </form>
+                </div>
+              ) : emailLinkError ? (
+                /* ERROR SCREEN FOR INVALID/EXPIRED LINK */
+                <div className="text-center space-y-6 py-4">
+                  <div className="w-16 h-16 bg-rose-500/20 rounded-full flex items-center justify-center mx-auto border border-rose-500/30">
+                    <AlertCircle className="w-8 h-8 text-rose-400" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-black text-white">تعذر توثيق تسجيل الدخول</h2>
+                    <p className="text-xs text-rose-300 leading-relaxed max-w-md mx-auto">
+                      {emailLinkError}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={resetEmailLinkState}
+                    className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm transition-all cursor-pointer"
+                  >
+                    طلب رابط تسجيل دخول جديد
+                  </button>
+                </div>
+              ) : !linkSent ? (
                 <>
                   <div className="space-y-2 text-right">
                     <h1 className="text-2xl font-black text-white">تسجيل الدخول / إنشاء حساب جديد</h1>

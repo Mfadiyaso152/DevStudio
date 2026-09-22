@@ -16,11 +16,16 @@ interface AuthContextType {
   user: UserProfile | null;
   isAuthenticated: boolean;
   isAuthModalOpen: boolean;
+  isVerifyingEmailLink: boolean;
+  emailLinkNeedsEmail: boolean;
+  emailLinkError: string | null;
+  resetEmailLinkState: () => void;
   openAuthModal: () => void;
   closeAuthModal: () => void;
   registerUser: (data: Omit<UserProfile, 'uid' | 'createdAt' | 'updatedAt' | 'role'>) => Promise<UserProfile>;
   loginWithGoogle: () => Promise<UserProfile>;
   sendFirebaseEmailLink: (email: string) => Promise<void>;
+  completeEmailLinkWithManualEmail: (email: string) => Promise<void>;
   completeFirebaseEmailSignIn: (email: string, code?: string) => Promise<UserProfile>;
   logout: () => Promise<void>;
   switchRole: (role: UserRole) => void;
@@ -40,6 +45,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isVerifyingEmailLink, setIsVerifyingEmailLink] = useState<boolean>(() => {
+    return isSignInWithEmailLink(auth, window.location.href);
+  });
+  const [emailLinkNeedsEmail, setEmailLinkNeedsEmail] = useState<boolean>(false);
+  const [emailLinkError, setEmailLinkError] = useState<string | null>(null);
 
   // Sync state with localStorage & Firestore
   useEffect(() => {
@@ -51,51 +61,107 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
+  const resetEmailLinkState = () => {
+    setIsVerifyingEmailLink(false);
+    setEmailLinkNeedsEmail(false);
+    setEmailLinkError(null);
+    if (window.history.replaceState) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
+
+  const executeEmailLinkSignIn = async (emailToUse: string, currentUrl: string) => {
+    setIsVerifyingEmailLink(true);
+    setEmailLinkError(null);
+    setEmailLinkNeedsEmail(false);
+
+    try {
+      const result = await signInWithEmailLink(auth, emailToUse.trim(), currentUrl);
+      window.localStorage.removeItem('emailForSignIn');
+
+      const fbUser = result.user;
+      const uid = fbUser.uid;
+      const email = fbUser.email || emailToUse.trim();
+
+      const isAdminEmail = email.toLowerCase() === 'mfb-15@hotmail.com';
+      let targetUser = await getUserProfile(uid);
+
+      if (!targetUser) {
+        targetUser = {
+          uid,
+          email,
+          fullName: fbUser.displayName || email.split('@')[0],
+          phone: fbUser.phoneNumber || '+966 50 123 4567',
+          dob: '2010-01-01',
+          entityType: 'individual',
+          role: isAdminEmail ? 'admin' : 'client',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await saveUserProfile(targetUser);
+      } else if (isAdminEmail && targetUser.role !== 'admin') {
+        targetUser = { ...targetUser, role: 'admin' };
+        await saveUserProfile(targetUser);
+      }
+
+      setUser(targetUser);
+      setIsVerifyingEmailLink(false);
+
+      // Clean query parameters from URL and auto-navigate to destination
+      const targetPath = targetUser.role === 'admin' ? '/admin' : '/home';
+      if (window.history.replaceState) {
+        window.history.replaceState({}, document.title, targetPath);
+      }
+      window.dispatchEvent(new Event('popstate'));
+
+    } catch (err: any) {
+      console.error('Firebase Email Link Sign In Error:', err);
+      setIsVerifyingEmailLink(false);
+
+      const code = err.code || '';
+      let message = 'حدث خطأ أثناء توثيق تسجيل الدخول عبر الرابط.';
+
+      if (code === 'auth/expired-action-code') {
+        message = 'رابط تسجيل الدخول انتهت صلاحيته. يرجى طلب رابط جديد.';
+      } else if (code === 'auth/invalid-action-code') {
+        message = 'رابط تسجيل الدخول غير صالح أو تم استخدامه مسبقاً.';
+      } else if (code === 'auth/invalid-email') {
+        message = 'البريد الإلكتروني المدخل غير مطابق أو غير صحيح.';
+      } else if (code === 'auth/user-disabled') {
+        message = 'تم تعطيل هذا الحساب بطلب من الإدارة.';
+      } else if (err.message) {
+        message = err.message;
+      }
+
+      setEmailLinkError(message);
+    }
+  };
+
+  const completeEmailLinkWithManualEmail = async (email: string) => {
+    if (!email || !email.includes('@')) {
+      setEmailLinkError('يرجى إدخال بريد إلكتروني صحيح');
+      return;
+    }
+    const currentUrl = window.location.href;
+    await executeEmailLinkSignIn(email, currentUrl);
+  };
+
   // Firebase Auth Listener & Auto Link Completion
   useEffect(() => {
     const handleEmailLinkSignIn = async () => {
       const currentUrl = window.location.href;
       if (isSignInWithEmailLink(auth, currentUrl)) {
-        let emailForSignIn = window.localStorage.getItem('emailForSignIn');
-        if (!emailForSignIn) {
-          emailForSignIn = window.prompt('يرجى تأكيد البريد الإلكتروني الذي تم إرسال الرابط إليه:');
-        }
-        if (emailForSignIn) {
-          try {
-            const result = await signInWithEmailLink(auth, emailForSignIn, currentUrl);
-            window.localStorage.removeItem('emailForSignIn');
-            
-            const uid = result.user.uid;
-            const email = result.user.email || emailForSignIn || 'user@devstudio.sa';
-            
-            const existing = await getUserProfile(uid);
-            if (existing) {
-              setUser(existing);
-            } else {
-              const newProf: UserProfile = {
-                uid,
-                email,
-                fullName: result.user.displayName || email.split('@')[0],
-                phone: result.user.phoneNumber || '+966 50 123 4567',
-                dob: '2010-01-01',
-                entityType: 'individual',
-                role: 'client',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              };
-              setUser(newProf);
-              await saveUserProfile(newProf);
-            }
+        setIsVerifyingEmailLink(true);
+        const savedEmail = window.localStorage.getItem('emailForSignIn');
 
-            // Clean query parameters from URL
-            if (window.history.replaceState) {
-              window.history.replaceState({}, document.title, window.location.pathname);
-            }
-          } catch (error: any) {
-            console.error('Firebase Email Link Sign In Error:', error);
-            alert('رابط تسجيل الدخول غير صالح أو انتهت صلاحيته. يرجى طلب رابط جديد.');
-          }
+        if (!savedEmail) {
+          // Open on different device or cleared storage: request email in UI
+          setIsVerifyingEmailLink(false);
+          setEmailLinkNeedsEmail(true);
+          return;
         }
+
+        await executeEmailLinkSignIn(savedEmail, currentUrl);
       }
     };
 
@@ -108,6 +174,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (existing) {
           setUser(existing);
         } else {
+          const isAdminEmail = (fbUser.email || '').toLowerCase() === 'mfb-15@hotmail.com';
           const newProf: UserProfile = {
             uid: fbUser.uid,
             email: fbUser.email || 'user@devstudio.sa',
@@ -115,7 +182,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             phone: fbUser.phoneNumber || '+966 50 123 4567',
             dob: '2010-01-01',
             entityType: 'individual',
-            role: 'client',
+            role: isAdminEmail ? 'admin' : 'client',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           };
@@ -325,11 +392,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isAuthenticated: !!user,
         isAuthModalOpen,
+        isVerifyingEmailLink,
+        emailLinkNeedsEmail,
+        emailLinkError,
+        resetEmailLinkState,
         openAuthModal,
         closeAuthModal,
         registerUser,
         loginWithGoogle,
         sendFirebaseEmailLink,
+        completeEmailLinkWithManualEmail,
         completeFirebaseEmailSignIn,
         logout,
         switchRole
