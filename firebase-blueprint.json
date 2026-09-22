@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User profile data including client and admin roles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "accountType": { "type": "string", "enum": ["individual", "company"] },
+        "dob": { "type": "string" },
+        "role": { "type": "string", "enum": ["client", "staff", "admin"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "fullName", "email"]
+    },
+    "quotes": {
+      "title": "Quotes and Projects",
+      "description": "Software development project quotes and progress tracking",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "accountType": { "type": "string" },
+        "projectType": { "type": "string", "enum": ["app", "website", "both"] },
+        "details": { "type": "string" },
+        "estimatedBudget": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "rejected", "agreed", "in_progress", "awaiting_payment", "warranty_pending", "completed"]
+        },
+        "rejectionReason": { "type": "string" },
+        "agreedPrice": { "type": "number" },
+        "progressPercent": { "type": "number" },
+        "currentStage": { "type": "string" },
+        "warrantyAccepted": { "type": "boolean" },
+        "deliveryCodeUrl": { "type": "string" },
+        "deliveryAppUrl": { "type": "string" },
+        "deliveryNotes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "projectType", "details", "status"]
+    },
+    "payments": {
+      "title": "Bank Wire Payments",
+      "description": "User payment receipts and admin approval",
+      "type": "object",
+      "properties": {
+        "quoteId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "amount": { "type": "number" },
+        "bankName": { "type": "string" },
+        "receiptNotes": { "type": "string" },
+        "receiptImage": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "rejectionNotes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "reviewedAt": { "type": "string" }
+      },
+      "required": ["quoteId", "userId", "amount", "status"]
+    }
+  }
+}

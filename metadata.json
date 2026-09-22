@@ -1,0 +1,6 @@
+{
+  "name": "DevStudio",
+  "description": "DevStudio - منصة متكاملة لطلب وتطوير التطبيقات والمواقع الإلكترونية ومتابعة المشاريع.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
