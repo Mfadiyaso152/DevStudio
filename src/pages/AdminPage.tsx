@@ -45,7 +45,7 @@ export const AdminPage: React.FC = () => {
   const { user, sendFirebaseEmailLink } = useAuth();
   
   // Primary Admin Email Required
-  const PRIMARY_ADMIN_EMAIL = 'mfb.15@icloud.com';
+  const PRIMARY_ADMIN_EMAIL = 'mfb-15@hotmail.com';
 
   // Admin Verification Gate State
   const [inputEmail, setInputEmail] = useState<string>('');
@@ -171,7 +171,9 @@ export const AdminPage: React.FC = () => {
               <ShieldCheck className="w-8 h-8" />
             </div>
             <h1 className="text-2xl font-black text-white">لوحة تحكم الإدارة والمشرفين</h1>
-            <p className="text-xs text-slate-400">يرجى إدخال البريد الإلكتروني المصرح له بالدخول لاستلام رابط التوثيق</p>
+            {!emailLinkSent && (
+              <p className="text-xs text-slate-400">يرجى إدخال البريد الإلكتروني المصرح له بالدخول لاستلام رابط التوثيق</p>
+            )}
           </div>
 
           {!emailLinkSent ? (
