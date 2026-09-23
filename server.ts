@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { sendOtpService, verifyOtpService } from './src/server/auth-service';
+import { sendOtpService, verifyOtpService } from './server/auth-service';
 
 dotenv.config();
 
