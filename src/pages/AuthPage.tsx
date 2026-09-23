@@ -51,6 +51,15 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const formatErrorMessage = (err: any, fallback: string): string => {
+    if (!err) return fallback;
+    if (typeof err === 'string' && err !== '[object Object]') return err;
+    if (typeof err.message === 'string' && err.message !== '[object Object]') return err.message;
+    if (typeof err.error === 'string') return err.error;
+    if (typeof err.error?.message === 'string') return err.error.message;
+    return fallback;
+  };
+
   // Start Cooldown timer
   const startCooldown = (seconds: number) => {
     setCooldown(seconds);
@@ -83,7 +92,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
       startCooldown(res.cooldownSeconds || 60);
       setStep('otp');
     } catch (err: any) {
-      setErrorMsg(err.message || 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى');
+      setErrorMsg(formatErrorMessage(err, 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى'));
     } finally {
       setIsSendingOtp(false);
     }
@@ -131,7 +140,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
         setStep(2);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
+      setErrorMsg(formatErrorMessage(err, 'رمز التحقق غير صحيح أو انتهت صلاحيته'));
     } finally {
       setIsVerifyingOtp(false);
     }
@@ -168,7 +177,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
         setStep(2);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'فشل تسجيل الدخول بواسطة Google');
+      setErrorMsg(formatErrorMessage(err, 'فشل تسجيل الدخول بواسطة Google'));
     }
   };
 
@@ -216,7 +225,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
 
       navigate('/home');
     } catch (err: any) {
-      setErrorMsg(err.message || 'حدث خطأ أثناء حفظ الملف الشخصي');
+      setErrorMsg(formatErrorMessage(err, 'حدث خطأ أثناء حفظ الملف الشخصي'));
     } finally {
       setIsVerifyingOtp(false);
     }

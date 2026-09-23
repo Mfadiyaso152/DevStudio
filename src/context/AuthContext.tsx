@@ -324,7 +324,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى');
+        const rawErr = data?.error || data?.message;
+        const errMsg = typeof rawErr === 'string'
+          ? rawErr
+          : (typeof rawErr?.message === 'string'
+              ? rawErr.message
+              : 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى');
+        throw new Error(errMsg);
       }
 
       return {
@@ -334,10 +340,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     } catch (err: any) {
       console.error('sendOtp error:', err);
-      if (err.message === 'Load failed' || err.message?.includes('Failed to fetch')) {
+      const msg = typeof err === 'string' 
+        ? err 
+        : (typeof err?.message === 'string' && err.message !== '[object Object]' 
+            ? err.message 
+            : (typeof err?.error === 'string' ? err.error : 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى'));
+      if (msg === 'Load failed' || msg?.includes('Failed to fetch')) {
         throw new Error('تعذر الاتصال بالخادم، يرجى التحقق من الاتصال والمحاولة مجدداً');
       }
-      throw new Error(err.message || 'فشل الاتصال بخادم إرسال الرمز');
+      throw new Error(msg);
     }
   };
 
@@ -372,7 +383,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
+        const rawErr = data?.error || data?.message;
+        const errMsg = typeof rawErr === 'string'
+          ? rawErr
+          : (typeof rawErr?.message === 'string'
+              ? rawErr.message
+              : 'رمز التحقق غير صحيح أو انتهت صلاحيته');
+        throw new Error(errMsg);
       }
 
       const uid = data.uid || ('usr_' + Date.now());
