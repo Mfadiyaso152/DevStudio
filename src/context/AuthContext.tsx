@@ -273,13 +273,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'فشل إرسال رمز التحقق');
+      let data: any = null;
+      try {
+        const rawText = await res.text();
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error(`استجابة غير صالحة من الخادم (${res.status})`);
+      }
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى');
       }
 
       return {
@@ -289,6 +299,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     } catch (err: any) {
       console.error('sendOtp error:', err);
+      if (err.message === 'Load failed' || err.message?.includes('Failed to fetch')) {
+        throw new Error('تعذر الاتصال بالخادم، يرجى التحقق من الاتصال والمحاولة مجدداً');
+      }
       throw new Error(err.message || 'فشل الاتصال بخادم إرسال الرمز');
     }
   };
@@ -308,13 +321,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const res = await fetch('/api/auth/verify-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ email: cleanEmail, otp: cleanOtp }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
+      let data: any = null;
+      try {
+        const rawText = await res.text();
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error(`استجابة غير صالحة من الخادم (${res.status})`);
+      }
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
       }
 
       const uid = data.uid || ('usr_' + Date.now());
@@ -325,7 +348,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await signInWithCustomToken(auth, data.customToken);
         } catch (tokenErr) {
-          console.warn('signInWithCustomToken notice:', tokenErr);
+          console.warn('[Firebase Auth signInWithCustomToken notice]:', tokenErr);
         }
       }
 
@@ -354,6 +377,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return targetUser;
     } catch (err: any) {
       console.error('verifyOtp error:', err);
+      if (err.message === 'Load failed' || err.message?.includes('Failed to fetch')) {
+        throw new Error('تعذر الاتصال بالخادم أثناء التحقق، يرجى المحاولة مرة أخرى');
+      }
       throw new Error(err.message || 'فشل التحقق من رمز OTP');
     }
   };

@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { EntityType } from '../types';
 import { convertArabicToEnglishDigits } from '../lib/db';
+import { OtpInput } from './OtpInput';
 
 export const AuthModal: React.FC = () => {
   const { 
@@ -288,17 +289,12 @@ export const AuthModal: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1 text-right">رمز التحقق (6 أرقام)</label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        maxLength={6}
-                        autoFocus
+                      <label className="block text-xs font-semibold text-slate-700 mb-1 text-center">أدخل الرمز المكون من 6 أرقام</label>
+                      <OtpInput
                         value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
-                        placeholder="------"
-                        className="w-full text-center tracking-[0.4em] text-2xl font-mono py-3.5 bg-white border-2 border-slate-300 focus:border-indigo-600 rounded-xl text-slate-900 font-bold outline-none"
+                        onChange={setOtpCode}
+                        disabled={isLoading}
+                        autoFocus={true}
                       />
                     </div>
 
@@ -308,7 +304,7 @@ export const AuthModal: React.FC = () => {
                         disabled={isLoading || otpCode.length !== 6}
                         className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <span>{isLoading ? 'جاري التحقق...' : 'تأكيد ودخول'}</span>
+                        <span>{isLoading ? 'جاري التحقق...' : 'تحقق'}</span>
                         <CheckCircle2 className="w-5 h-5" />
                       </button>
 

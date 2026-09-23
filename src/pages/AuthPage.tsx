@@ -19,6 +19,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { AccountType } from '../types';
 import { convertArabicToEnglishDigits } from '../lib/db';
+import { OtpInput } from '../components/OtpInput';
 
 export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navigate }) => {
   const { 
@@ -442,21 +443,13 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                     <span className="font-mono font-bold text-indigo-300 text-xs dir-ltr">{email}</span>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-300 text-right">رمز التحقق المكون من 6 أرقام</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={6}
-                      autoFocus
+                  <div className="space-y-3">
+                    <label className="block text-xs font-bold text-slate-300 text-center">أدخل الرمز المكون من 6 أرقام</label>
+                    <OtpInput
                       value={otpCode}
-                      onChange={(e) => {
-                        const val = e.target.value.replace(/[^0-9]/g, '');
-                        setOtpCode(val);
-                      }}
-                      placeholder="------"
-                      className="w-full text-center tracking-[0.5em] text-2xl font-mono py-4 bg-slate-800 border-2 border-slate-700 focus:border-indigo-500 rounded-2xl text-white font-bold outline-none"
+                      onChange={setOtpCode}
+                      disabled={isLoading}
+                      autoFocus={true}
                     />
                     <p className="text-[11px] text-slate-400 text-center">الرمز صالح لمدة 10 دقائق وبحد أقصى 5 محاولات</p>
                   </div>
@@ -471,7 +464,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                       disabled={isLoading || otpCode.length !== 6}
                       className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
                     >
-                      <span>{isLoading ? 'جاري التحقق...' : 'تأكيد وتسجيل الدخول'}</span>
+                      <span>{isLoading ? 'جاري التحقق...' : 'تحقق'}</span>
                       <ArrowLeft className="w-4 h-4" />
                     </button>
 

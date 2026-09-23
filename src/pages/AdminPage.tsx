@@ -40,6 +40,7 @@ import {
   getOrderCodeForQuote
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
+import { OtpInput } from '../components/OtpInput';
 
 export const AdminPage: React.FC = () => {
   const { user, sendOtp, verifyOtp } = useAuth();
@@ -240,17 +241,12 @@ export const AdminPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 text-right">رمز التحقق (6 أرقام)</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  autoFocus
+                <label className="block text-xs font-bold text-slate-300 mb-2 text-center">أدخل رمز التحقق (6 أرقام)</label>
+                <OtpInput
                   value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
-                  placeholder="------"
-                  className="w-full text-center tracking-[0.5em] text-2xl font-mono py-3.5 bg-slate-800 border-2 border-slate-700 focus:border-indigo-500 rounded-xl text-white font-bold outline-none"
+                  onChange={setOtpCode}
+                  disabled={isVerifyingOtp}
+                  autoFocus={true}
                 />
               </div>
 
@@ -267,7 +263,7 @@ export const AdminPage: React.FC = () => {
                 className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{isVerifyingOtp ? 'جاري التحقق...' : 'تأكيد وتسجيل الدخول للوحة الإدارة'}</span>
+                <span>{isVerifyingOtp ? 'جاري التحقق...' : 'تحقق وتأكيد الدخول'}</span>
               </button>
 
               <div className="flex gap-2">
