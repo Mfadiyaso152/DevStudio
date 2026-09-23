@@ -16,16 +16,18 @@ interface BottomBarProps {
 export const BottomBar: React.FC<BottomBarProps> = ({ currentPath, navigate }) => {
   const { user } = useAuth();
 
+  // If user is admin (e.g. mfb.15@icloud.com), they are in the dedicated Admin workspace
+  const isAdmin = user?.email?.toLowerCase() === 'mfb.15@icloud.com' || user?.email?.toLowerCase() === 'mfb-15@hotmail.com' || user?.role === 'admin';
+  if (isAdmin) {
+    return null; // Admin has their own comprehensive header/sidebar inside AdminPage
+  }
+
   const navItems = [
     { path: '/home', label: 'الرئيسية', icon: Home },
     { path: '/requests', label: 'طلباتي', icon: FileText },
     { path: '/payment', label: 'الدفع', icon: CreditCard },
     { path: '/profile', label: 'حسابي', icon: User },
   ];
-
-  if (user?.role === 'admin' || user?.role === 'staff') {
-    navItems.push({ path: '/admin', label: 'الإدارة', icon: ShieldCheck });
-  }
 
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 font-['Tajawal',sans-serif]">

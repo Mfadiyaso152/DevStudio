@@ -84,19 +84,15 @@ export const QuoteRequestPage: React.FC<{ navigate: (path: string) => void }> = 
       {/* Header back button */}
       <div className="flex items-center justify-between border-b border-slate-200 pb-6">
         <div>
-          <span className="text-xs font-bold px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
-            خدمات الاستوديو البرمجي
-          </span>
-          <h1 className="text-3xl font-black text-slate-900 mt-2">طلب عرض سعر جديد لمشروعك</h1>
-          <p className="text-sm text-slate-600 mt-1">قم بتحديد المواصفات ونوع الخدمة وسيقوم الموظف بمراجعتها والتواصل معك فوراً</p>
+          <h1 className="text-3xl font-black text-slate-900">تقديم عرض برمجه</h1>
         </div>
 
         <button
           onClick={() => navigate('/home')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer shrink-0"
+          title="العودة"
+          className="p-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all cursor-pointer shrink-0"
         >
-          <ArrowRight className="w-4 h-4" />
-          <span>العودة للتطبيق</span>
+          <ArrowRight className="w-5 h-5" />
         </button>
       </div>
 
@@ -204,7 +200,7 @@ export const QuoteRequestPage: React.FC<{ navigate: (path: string) => void }> = 
             className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-base rounded-xl shadow-xl shadow-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <Send className="w-5 h-5" />
-            <span>{isLoading ? 'جاري تأكيد وإرسال الطلب...' : 'تأكيد وإرسال طلب عرض السعر'}</span>
+            <span>{isLoading ? 'جاري تأكيد وإرسال الطلب...' : 'تأكيد وإرسال طلب البرمجة'}</span>
           </button>
         </div>
 

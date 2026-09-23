@@ -13,11 +13,14 @@ import { AdminPage } from './pages/AdminPage';
 import { MOCK_PROJECTS } from './lib/mockData';
 
 export function AppContent() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, logout } = useAuth();
+
+  const isAdmin = user?.email?.toLowerCase() === 'mfb.15@icloud.com' || 
+                  user?.email?.toLowerCase() === 'mfb-15@hotmail.com' || 
+                  user?.role === 'admin';
 
   const [currentPath, setCurrentPath] = useState<string>(() => {
     const path = window.location.pathname;
-    if (path === '/' || path === '' || path.includes('/landing')) return '/landing';
     if (path.includes('/auth') || path.includes('/login')) return '/auth';
     if (path.includes('/home')) return '/home';
     if (path.includes('/requests')) return '/requests';
@@ -28,6 +31,17 @@ export function AppContent() {
     if (path.includes('/admin')) return '/admin';
     return '/landing';
   });
+
+  // If user is already authenticated and visits root or landing, seamlessly direct to /home or /admin
+  useEffect(() => {
+    if (isAuthenticated) {
+      if (currentPath === '/landing' || currentPath === '/' || currentPath === '/auth') {
+        const target = isAdmin ? '/admin' : '/home';
+        setCurrentPath(target);
+        window.history.replaceState({}, '', target);
+      }
+    }
+  }, [isAuthenticated, isAdmin, currentPath]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -53,6 +67,15 @@ export function AppContent() {
     setCurrentPath(path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // If user is Admin (mfb.15@icloud.com), they are strictly in the Admin workspace
+  if (isAdmin && isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-900 font-['Tajawal',sans-serif] selection:bg-indigo-500 selection:text-white" dir="rtl">
+        <AdminPage />
+      </div>
+    );
+  }
 
   const isLandingOrAuth = currentPath === '/landing' || currentPath === '/' || currentPath === '/auth';
 
@@ -88,7 +111,8 @@ export function AppContent() {
         return <ProfilePage openAuthModal={() => navigate('/auth')} />;
 
       case '/admin':
-        return <AdminPage />;
+        // Secret Admin route: If not admin, redirect to home or landing
+        return isAuthenticated ? <HomePage openQuoteModal={() => navigate('/quote-request')} navigate={navigate} /> : <LandingPage navigate={navigate} />;
 
       default:
         return <LandingPage navigate={navigate} />;

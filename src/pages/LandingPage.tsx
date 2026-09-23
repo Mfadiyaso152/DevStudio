@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { 
   Code2, 
@@ -10,20 +10,23 @@ import {
   Terminal, 
   Database, 
   ShieldCheck, 
-  Cpu, 
-  Zap,
-  Award,
-  Users,
+  ExternalLink,
   Layers
 } from 'lucide-react';
-import { PORTFOLIO_PROJECTS } from '../lib/mockData';
+import { PortfolioProject } from '../types';
+import { subscribePortfolioProjects } from '../lib/db';
 
 export const LandingPage: React.FC<{ navigate: (path: string) => void }> = ({ navigate }) => {
+  const [portfolio, setPortfolio] = useState<PortfolioProject[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribePortfolioProjects(setPortfolio);
+    return () => unsub();
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] selection:bg-indigo-500 selection:text-white" dir="rtl">
       
-      {/* NO TOP NAVBAR - As requested: "ابي اول شي يكون صفحة تعريف و مافي شريط علوي من الاساس" */}
-
       {/* HERO SECTION */}
       <section className="relative pt-20 pb-28 px-4 sm:px-6 lg:px-8 overflow-hidden flex flex-col items-center justify-center min-h-screen text-center">
         
@@ -132,7 +135,7 @@ export const LandingPage: React.FC<{ navigate: (path: string) => void }> = ({ na
               {
                 icon: Database,
                 title: 'قواعد البيانات والسحابة',
-                desc: 'ربط آمن للغاية مع قواعد البيانات اللحظية (Firestore/PostgreSQL) وإدارة الصلاحيات.'
+                desc: 'ربط آمن للغاية مع قواعد البيانات اللحظية (Firestore) وإدارة الصلاحيات.'
               }
             ].map((card, idx) => {
               const Icon = card.icon;
@@ -172,44 +175,62 @@ export const LandingPage: React.FC<{ navigate: (path: string) => void }> = ({ na
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {PORTFOLIO_PROJECTS.map((project) => (
-              <div 
-                key={project.id}
-                className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden hover:border-indigo-500/50 transition-all flex flex-col justify-between"
-              >
-                <div className="h-48 overflow-hidden relative group">
-                  <img 
-                    src={project.image} 
-                    alt={project.title} 
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent opacity-80" />
-                  <span className="absolute top-4 right-4 px-3 py-1 bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold rounded-lg border border-white/10">
-                    {project.category}
-                  </span>
-                </div>
-
-                <div className="p-6 space-y-4 flex-1 flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-bold text-white">{project.title}</h3>
-                    <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{project.description}</p>
+          {portfolio.length === 0 ? (
+            <div className="p-12 text-center bg-slate-900/50 rounded-3xl border border-slate-800 space-y-3">
+              <Sparkles className="w-10 h-10 text-slate-600 mx-auto" />
+              <p className="text-slate-400 text-sm font-medium">سيتم إضافة أحدث أعمالنا ومشاريعنا قريباً</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {portfolio.map((project) => (
+                <div 
+                  key={project.id}
+                  className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden hover:border-indigo-500/50 transition-all flex flex-col justify-between"
+                >
+                  <div className="h-48 overflow-hidden relative group">
+                    <img 
+                      src={project.imageUrl || 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80'} 
+                      alt={project.title} 
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent opacity-80" />
                   </div>
 
-                  <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-indigo-400">{project.clientType}</span>
-                    <button
-                      onClick={() => navigate('/auth')}
-                      className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>اطلب مشابه</span>
-                      <ArrowLeft className="w-3.5 h-3.5" />
-                    </button>
+                  <div className="p-6 space-y-4 flex-1 flex flex-col justify-between">
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-bold text-white">{project.title}</h3>
+                      {project.description && (
+                        <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{project.description}</p>
+                      )}
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between">
+                      {project.linkUrl ? (
+                        <a
+                          href={project.linkUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5"
+                        >
+                          <span>معاينة المشروع</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-500">تم الإنجاز</span>
+                      )}
+                      <button
+                        onClick={() => navigate('/auth')}
+                        className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>اطلب مشروع</span>
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
         </div>
       </section>

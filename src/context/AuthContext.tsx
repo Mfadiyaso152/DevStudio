@@ -25,6 +25,7 @@ interface AuthContextType {
   closeAuthModal: () => void;
   registerUser: (data: Omit<UserProfile, 'uid' | 'createdAt' | 'updatedAt' | 'role'>) => Promise<UserProfile>;
   loginWithGoogle: () => Promise<UserProfile>;
+  loginWithEmail: (email: string) => Promise<UserProfile>;
   sendOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
   verifyOtp: (email: string, otp: string) => Promise<UserProfile>;
   sendFirebaseEmailLink: (email: string) => Promise<void>;
@@ -86,7 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const uid = fbUser.uid;
       const email = fbUser.email || emailToUse.trim();
 
-      const isAdminEmail = email.toLowerCase() === 'mfb-15@hotmail.com';
+      const isAdminEmail = email.toLowerCase() === 'mfb.15@icloud.com' || email.toLowerCase() === 'mfb-15@hotmail.com';
       let targetUser = await getUserProfile(uid);
 
       if (!targetUser) {
@@ -94,8 +95,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           uid,
           email,
           fullName: fbUser.displayName || email.split('@')[0],
-          phone: fbUser.phoneNumber || '+966 50 123 4567',
-          dob: '2010-01-01',
+          phone: fbUser.phoneNumber || '',
+          dob: '',
           entityType: 'individual',
           role: isAdminEmail ? 'admin' : 'client',
           createdAt: new Date().toISOString(),
@@ -182,8 +183,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             uid: fbUser.uid,
             email: fbUser.email || 'user@devstudio.sa',
             fullName: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'مستخدم DevStudio'),
-            phone: fbUser.phoneNumber || '+966 50 123 4567',
-            dob: '2010-01-01',
+            phone: fbUser.phoneNumber || '',
+            dob: '',
             entityType: 'individual',
             role: isAdminEmail ? 'admin' : 'client',
             createdAt: new Date().toISOString(),
@@ -237,9 +238,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const googleProfile: UserProfile = {
         uid: fbUser.uid,
         email: fbUser.email || 'user.google@devstudio.sa',
-        fullName: fbUser.displayName || 'مستخدم جوجل',
-        phone: fbUser.phoneNumber || '+966 50 123 4567',
-        dob: '2010-01-01',
+        fullName: fbUser.displayName || '',
+        phone: fbUser.phoneNumber || '',
+        dob: '',
         entityType: 'individual',
         role: 'client',
         createdAt: new Date().toISOString(),
@@ -262,6 +263,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(err.message || 'فشل تسجيل الدخول بواسطة Google');
       }
     }
+  };
+
+  // Direct Email Login (Fast, OTP-free login by Email)
+  const loginWithEmail = async (email: string): Promise<UserProfile> => {
+    if (!email || !email.includes('@')) {
+      throw new Error('البريد الإلكتروني غير صحيح');
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const isAdminEmail = cleanEmail === 'mfb.15@icloud.com' || cleanEmail === 'mfb-15@hotmail.com';
+    const role: UserRole = isAdminEmail ? 'admin' : 'client';
+    const uid = 'usr_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+
+    let targetUser = await getUserProfile(uid);
+    if (!targetUser) {
+      targetUser = {
+        uid,
+        email: cleanEmail,
+        fullName: '',
+        phone: '',
+        dob: '2010-01-01',
+        entityType: 'individual',
+        role,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await saveUserProfile(targetUser);
+    } else if (isAdminEmail && targetUser.role !== 'admin') {
+      targetUser = { ...targetUser, role: 'admin' };
+      await saveUserProfile(targetUser);
+    }
+
+    setUser(targetUser);
+    closeAuthModal();
+    return targetUser;
   };
 
   // Send 6-digit OTP via Backend API
@@ -341,7 +376,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const uid = data.uid || ('usr_' + Date.now());
-      const role: UserRole = cleanEmail === 'mfb-15@hotmail.com' ? 'admin' : (data.role || 'client');
+      const isAdminEmail = cleanEmail === 'mfb.15@icloud.com' || cleanEmail === 'mfb-15@hotmail.com';
+      const role: UserRole = isAdminEmail ? 'admin' : (data.role || 'client');
 
       // If customToken returned from Firebase Admin, sign in via Firebase Auth
       if (data.customToken) {
@@ -367,7 +403,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: new Date().toISOString()
         };
         await saveUserProfile(targetUser);
-      } else if (cleanEmail === 'mfb-15@hotmail.com' && targetUser.role !== 'admin') {
+      } else if (isAdminEmail && targetUser.role !== 'admin') {
         targetUser = { ...targetUser, role: 'admin' };
         await saveUserProfile(targetUser);
       }
@@ -470,8 +506,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       uid,
       email,
       fullName: email.split('@')[0],
-      phone: '+966 50 123 4567',
-      dob: '2010-01-01',
+      phone: '',
+      dob: '',
       entityType: 'individual',
       role: 'client',
       createdAt: new Date().toISOString(),
@@ -487,6 +523,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signOut(auth);
     } catch {}
     setUser(null);
+    localStorage.removeItem(DEMO_USER_STORAGE_KEY);
+    window.location.href = '/auth';
   };
 
   const switchRole = (role: UserRole) => {
@@ -523,6 +561,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         closeAuthModal,
         registerUser,
         loginWithGoogle,
+        loginWithEmail,
         sendOtp,
         verifyOtp,
         sendFirebaseEmailLink,

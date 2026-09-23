@@ -36,7 +36,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const navItems = [
     { label: 'الرئيسية', path: '/home', icon: Home },
     { label: 'طلباتي ومشاريعي', path: '/requests', icon: FileText },
-    { label: 'الدفع والتحويل', path: '/payment', icon: CreditCard },
+    { label: 'الدفع', path: '/payment', icon: CreditCard },
     { label: 'ملفي الشخصي', path: '/profile', icon: User },
   ];
 
@@ -190,7 +190,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl flex items-center justify-center gap-2"
             >
               <Sparkles className="w-4 h-4" />
-              <span>ابدأ الآن (طلب عرض سعر)</span>
+              <span>ابدأ الآن (تقديم طلب برمجة)</span>
             </button>
           </div>
         </div>

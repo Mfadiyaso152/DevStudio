@@ -49,7 +49,7 @@ export const Footer: React.FC<{ navigate: (p: string) => void }> = ({ navigate }
               </li>
               <li>
                 <button onClick={() => navigate('/payment')} className="hover:text-indigo-400 transition-colors">
-                  معلومات التحويل البنكي
+                  معلومات وسداد الدفعات
                 </button>
               </li>
               <li>

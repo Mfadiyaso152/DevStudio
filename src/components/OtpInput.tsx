@@ -7,6 +7,14 @@ interface OtpInputProps {
   autoFocus?: boolean;
 }
 
+function normalizeDigits(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString())
+    .replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d).toString())
+    .replace(/[^0-9]/g, '');
+}
+
 export const OtpInput: React.FC<OtpInputProps> = ({
   value,
   onChange,
@@ -16,7 +24,8 @@ export const OtpInput: React.FC<OtpInputProps> = ({
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Split value into 6 characters array
-  const digits = Array.from({ length: 6 }, (_, i) => value[i] || '');
+  const cleanValue = normalizeDigits(value);
+  const digits = Array.from({ length: 6 }, (_, i) => cleanValue[i] || '');
 
   useEffect(() => {
     if (autoFocus && inputRefs.current[0]) {
@@ -25,7 +34,7 @@ export const OtpInput: React.FC<OtpInputProps> = ({
   }, [autoFocus]);
 
   const handleChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawVal = e.target.value.replace(/[^0-9]/g, '');
+    const rawVal = normalizeDigits(e.target.value);
     if (!rawVal) {
       // Cleared
       const newDigits = [...digits];
@@ -73,7 +82,7 @@ export const OtpInput: React.FC<OtpInputProps> = ({
   };
 
   const handlePasteDirect = (pastedText: string) => {
-    const cleanNumbers = pastedText.replace(/[^0-9]/g, '').slice(0, 6);
+    const cleanNumbers = normalizeDigits(pastedText).slice(0, 6);
     if (!cleanNumbers) return;
 
     onChange(cleanNumbers);

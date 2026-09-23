@@ -23,13 +23,29 @@ export type ServiceType = 'app' | 'website' | 'system';
 export type ProjectType = ServiceType;
 
 export type QuoteStatus = 
-  | 'pending'          // بانتظار مراجعة الموظفين
+  | 'pending'          // بانتظار مراجعة الإدارة
   | 'accepted'         // تم القبول - بانتظار التواصل وتحديد السعر
   | 'rejected'         // تم الرفض
   | 'agreed'           // تم الاتفاق على السعر - بانتظار الدفع
   | 'in_progress'      // جارٍ العمل وتحديث الإنجاز
   | 'warranty_pending' // اكتمل العمل - بانتظار الموافقة على سياسة الضمان
   | 'completed';       // تم الموافقة والتسليم النهائي
+
+export interface StaffMember {
+  id: string;
+  userId?: string; // Links to registered UserProfile uid
+  fullName: string;
+  email: string;
+  phone: string;
+  role: 'developer' | 'designer' | 'project_manager' | 'qa' | 'support' | 'admin';
+  roleLabel: string;
+  department: string;
+  status: 'active' | 'inactive';
+  assignedProjectsCount: number;
+  avatarUrl?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
 
 export interface QuoteRequest {
   id: string;
@@ -48,10 +64,12 @@ export interface QuoteRequest {
   details: string;
   expectedBudget: string;
   expectedTimeframe: string;
-  status: 'pending' | 'accepted' | 'rejected';
+  status: 'pending' | 'accepted' | 'rejected' | 'in_progress' | 'completed';
   rejectionReason?: string;
   staffNotes?: string;
   agreedPrice?: number;
+  assignedStaffId?: string;
+  assignedStaffName?: string;
   contactMethod?: 'whatsapp' | 'email' | 'phone';
   createdAt: string;
   updatedAt: string;
@@ -100,15 +118,29 @@ export interface PaymentReceipt {
   projectTitle: string;
   userId: string;
   userName: string;
+  userEmail?: string;
   amount: number;
   bankName: string;
   senderName: string;
   referenceNumber: string;
   transferDate: string;
   receiptNote?: string;
-  status: 'pending' | 'approved' | 'rejected';
+  receiptImage?: string; // base64 or URL
+  status: 'pending' | 'approved' | 'rejected' | 'due'; // 'due' = admin added payment, client needs to pay; 'pending' = receipt submitted
   supervisorNotes?: string;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface PortfolioProject {
+  id: string;
+  title: string;
+  linkUrl: string;
+  imageUrl: string;
+  description?: string;
+  category?: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface BankAccountInfo {

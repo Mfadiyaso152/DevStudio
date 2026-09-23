@@ -1,414 +1,801 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  ShieldCheck, 
+  Home,
+  FileText, 
+  CreditCard, 
+  User, 
   CheckCircle2, 
   XCircle, 
   Clock, 
-  PhoneCall, 
-  MessageCircle, 
-  DollarSign, 
-  Layers, 
-  Upload, 
-  FileText, 
   Sparkles, 
-  ExternalLink,
   Edit,
-  Save,
-  Users,
-  BarChart3,
-  Lock,
-  Download,
+  Trash2,
+  Search,
+  Activity,
+  X,
+  Plus,
+  Phone,
+  MessageCircle,
+  ExternalLink,
+  Image as ImageIcon,
   Check,
-  AlertCircle,
-  Mail,
-  Send,
-  UserCheck
+  Building2,
+  DollarSign,
+  Briefcase,
+  Layers,
+  Upload,
+  LogOut,
+  ChevronLeft
 } from 'lucide-react';
-import { QuoteRequest, Project, PaymentReceipt, UserProfile } from '../types';
+import { QuoteRequest, Project, PaymentReceipt, UserProfile, StaffMember, PortfolioProject } from '../types';
 import { 
   subscribeQuotes, 
   subscribeProjects, 
   subscribePayments, 
+  subscribeStaff,
+  subscribePortfolioProjects,
   updateQuoteStatus, 
-  updateProjectProgress,
+  createPaymentInvoice,
   approveOrRejectPayment,
   getAllUserProfiles,
-  updateUserRole,
+  addStaffMember,
+  deleteStaffMember,
+  addPortfolioProject,
+  updatePortfolioProject,
+  deletePortfolioProject,
   convertArabicToEnglishDigits,
-  getClientCodeForUser,
   getOrderCodeForQuote
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
-import { OtpInput } from '../components/OtpInput';
 
 export const AdminPage: React.FC = () => {
-  const { user, sendOtp, verifyOtp } = useAuth();
+  const { user, logout } = useAuth();
   
-  // Primary Admin Email Required
-  const PRIMARY_ADMIN_EMAIL = 'mfb-15@hotmail.com';
+  // Master Admin check
+  const isMasterAdmin = user?.email?.toLowerCase() === 'mfb.15@icloud.com' || 
+                        user?.email?.toLowerCase() === 'mfb-15@hotmail.com' || 
+                        user?.role === 'admin';
 
-  // Admin Verification Gate State
-  const [inputEmail, setInputEmail] = useState<string>('mfb-15@hotmail.com');
-  const [otpSent, setOtpSent] = useState<boolean>(false);
-  const [otpCode, setOtpCode] = useState<string>('');
-  const [gateError, setGateError] = useState<string>('');
-  const [isSendingLink, setIsSendingLink] = useState<boolean>(false);
-  const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false);
+  // Active Tab for Admin Navigation
+  const [activeTab, setActiveTab] = useState<'home' | 'requests' | 'payments' | 'portfolio' | 'staff'>('home');
 
-  // Tab State: 1 = stats, 2 = quotes, 3 = payments, 4 = permissions (password protected)
-  const [activeTab, setActiveTab] = useState<'stats' | 'quotes' | 'payments' | 'users'>('stats');
-
-  // Section 4 Password Lock State
-  const [usersSectionUnlocked, setUsersSectionUnlocked] = useState<boolean>(false);
-  const [passwordInput, setPasswordInput] = useState<string>('');
-  const [passwordError, setPasswordError] = useState<string>('');
-
-  // DB States
+  // Live Data States
   const [quotes, setQuotes] = useState<QuoteRequest[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [payments, setPayments] = useState<PaymentReceipt[]>([]);
+  const [staffList, setStaffList] = useState<StaffMember[]>([]);
+  const [portfolioList, setPortfolioList] = useState<PortfolioProject[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
 
-  // Editing agreed price and staff notes state
-  const [editingPrices, setEditingPrices] = useState<Record<string, string>>({});
-  const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
-  const [confirmSuccessMsg, setConfirmSuccessMsg] = useState<Record<string, string>>({});
+  // Quote Details & Action Modal
+  const [selectedQuote, setSelectedQuote] = useState<QuoteRequest | null>(null);
+  const [modalAgreedPrice, setModalAgreedPrice] = useState<string>('');
+  const [modalStaffNotes, setModalStaffNotes] = useState<string>('');
+  const [modalRejectionReason, setModalRejectionReason] = useState<string>('');
+  const [isSavingQuote, setIsSavingQuote] = useState<boolean>(false);
+
+  // Add Payment Modal (Admin adds payment due for a client project)
+  const [isAddPaymentOpen, setIsAddPaymentOpen] = useState<boolean>(false);
+  const [paySelectedUserId, setPaySelectedUserId] = useState<string>('');
+  const [paySelectedProjectId, setPaySelectedProjectId] = useState<string>('');
+  const [payAmount, setPayAmount] = useState<string>('');
+  const [payNote, setPayNote] = useState<string>('');
+  const [isCreatingPayment, setIsCreatingPayment] = useState<boolean>(false);
+
+  // Portfolio Management Modal
+  const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState<boolean>(false);
+  const [editingPortfolioItem, setEditingPortfolioItem] = useState<PortfolioProject | null>(null);
+  const [portfolioTitle, setPortfolioTitle] = useState<string>('');
+  const [portfolioLink, setPortfolioLink] = useState<string>('');
+  const [portfolioImage, setPortfolioImage] = useState<string>('');
+  const [isSavingPortfolio, setIsSavingPortfolio] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Add Staff Modal (Select from registered users)
+  const [isAddStaffOpen, setIsAddStaffOpen] = useState<boolean>(false);
+  const [selectedStaffUserId, setSelectedStaffUserId] = useState<string>('');
+  const [staffRoleLabel, setStaffRoleLabel] = useState<string>('مطور برمجيات');
+  const [isSavingStaff, setIsSavingStaff] = useState<boolean>(false);
+
+  // Toast Notification
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   useEffect(() => {
     const unsubQ = subscribeQuotes(setQuotes);
     const unsubProj = subscribeProjects(setProjects);
     const unsubPay = subscribePayments(setPayments);
+    const unsubStaff = subscribeStaff(setStaffList);
+    const unsubPort = subscribePortfolioProjects(setPortfolioList);
     setAllUsers(getAllUserProfiles());
 
     return () => {
       unsubQ();
       unsubProj();
       unsubPay();
+      unsubStaff();
+      unsubPort();
     };
   }, []);
 
-  // Handle sending OTP to admin
-  const handleSendAdminOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanEmail = inputEmail.trim().toLowerCase();
-
-    if (cleanEmail !== PRIMARY_ADMIN_EMAIL.toLowerCase()) {
-      setGateError('عفواً، لا يملك هذا البريد صلاحيات الدخول للوحة التحكم');
-      return;
-    }
-
-    setIsSendingLink(true);
-    setGateError('');
-
-    try {
-      await sendOtp(PRIMARY_ADMIN_EMAIL);
-      setOtpSent(true);
-    } catch (err: any) {
-      setGateError(err.message || 'فشل إرسال رمز التحقق للبريد الإلكتروني');
-    } finally {
-      setIsSendingLink(false);
-    }
-  };
-
-  // Handle verifying Admin OTP
-  const handleVerifyAdminOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otpCode || otpCode.trim().length !== 6) {
-      setGateError('يرجى إدخال رمز التحقق المكون من 6 أرقام');
-      return;
-    }
-
-    setIsVerifyingOtp(true);
-    setGateError('');
-
-    try {
-      await verifyOtp(PRIMARY_ADMIN_EMAIL, otpCode.trim());
-    } catch (err: any) {
-      setGateError(err.message || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
-    } finally {
-      setIsVerifyingOtp(false);
-    }
-  };
-
-  // Check if Admin panel is unlocked
-  const isAdminUnlocked = user?.email?.toLowerCase() === PRIMARY_ADMIN_EMAIL.toLowerCase() || user?.role === 'admin' || user?.role === 'staff';
-
-  // Handle Password verification for Section 4 (Users & Permissions)
-  const handleVerifyPassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (passwordInput === '2011') {
-      setUsersSectionUnlocked(true);
-      setPasswordError('');
-      setAllUsers(getAllUserProfiles());
-    } else {
-      setPasswordError('كلمة المرور غير صحيحة، يرجى إدخال 2011');
-    }
-  };
-
-  // Handle Granting/Revoking Employee Role
-  const handleToggleStaffRole = async (targetUser: UserProfile) => {
-    const newRole = targetUser.role === 'staff' ? 'client' : 'staff';
-    await updateUserRole(targetUser.uid, newRole);
+  useEffect(() => {
     setAllUsers(getAllUserProfiles());
+  }, [quotes, staffList]);
+
+  // When client changes in Add Payment Modal, filter projects & reset selection
+  const clientProjects = useMemo(() => {
+    if (!paySelectedUserId) return [];
+    return projects.filter(p => p.userId === paySelectedUserId);
+  }, [paySelectedUserId, projects]);
+
+  const handleClientSelectChange = (userId: string) => {
+    setPaySelectedUserId(userId);
+    setPaySelectedProjectId('');
+    setPayAmount('');
   };
 
-  // Handle Accepting Quote & Setting Amount
-  const handleConfirmQuotePrice = async (quote: QuoteRequest) => {
-    const inputPrice = editingPrices[quote.id] || quote.agreedPrice?.toString() || '15000';
-    const priceNum = parseFloat(inputPrice) || 15000;
-    const notes = editingNotes[quote.id] || quote.staffNotes || 'تم التواصل والتأكيد مع العميل عبر الواتساب وتثبيت السعر المتفق عليه.';
+  const handleProjectSelectChange = (projId: string) => {
+    setPaySelectedProjectId(projId);
+    const selectedProj = projects.find(p => p.id === projId);
+    if (selectedProj && selectedProj.agreedPrice) {
+      setPayAmount(selectedProj.agreedPrice.toString());
+    } else {
+      setPayAmount('');
+    }
+  };
 
-    await updateQuoteStatus(quote.id, 'accepted', notes, priceNum, 'whatsapp');
-    setConfirmSuccessMsg(prev => ({ ...prev, [quote.id]: 'تم تأكيد المبلغ وتأكيد الطلب بنجاح ✓' }));
-    setTimeout(() => {
-      setConfirmSuccessMsg(prev => {
-        const next = { ...prev };
-        delete next[quote.id];
-        return next;
+  // Handle Opening Quote Modal
+  const openQuoteModal = (q: QuoteRequest) => {
+    setSelectedQuote(q);
+    setModalAgreedPrice(q.agreedPrice ? q.agreedPrice.toString() : '');
+    setModalStaffNotes(q.staffNotes || '');
+    setModalRejectionReason(q.rejectionReason || '');
+  };
+
+  // Save Quote Action: Accept / Reject
+  const handleUpdateQuote = async (status: 'accepted' | 'rejected' | 'pending') => {
+    if (!selectedQuote) return;
+    setIsSavingQuote(true);
+
+    const priceNum = modalAgreedPrice ? parseFloat(convertArabicToEnglishDigits(modalAgreedPrice)) : undefined;
+
+    try {
+      await updateQuoteStatus(
+        selectedQuote.id,
+        status,
+        modalStaffNotes,
+        priceNum,
+        undefined,
+        undefined,
+        undefined,
+        status === 'rejected' ? modalRejectionReason : undefined
+      );
+
+      showToast(status === 'accepted' ? 'تم قبول الطلب وتحديد السعر بنجاح' : 'تم رفض الطلب');
+      setSelectedQuote(null);
+    } catch (err: any) {
+      showToast(err.message || 'حدث خطأ أثناء حفظ التحديث');
+    } finally {
+      setIsSavingQuote(false);
+    }
+  };
+
+  // Handle Add Payment for Client
+  const handleCreatePaymentDue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paySelectedUserId || !paySelectedProjectId || !payAmount) {
+      showToast('يرجى اختيار العميل والمشروع وتحديد المبلغ');
+      return;
+    }
+
+    const selectedUser = allUsers.find(u => u.uid === paySelectedUserId);
+    const selectedProj = projects.find(p => p.id === paySelectedProjectId);
+
+    if (!selectedUser || !selectedProj) {
+      showToast('بيانات العميل أو المشروع غير مكتملة');
+      return;
+    }
+
+    setIsCreatingPayment(true);
+    try {
+      await createPaymentInvoice({
+        projectId: selectedProj.id,
+        projectTitle: selectedProj.title,
+        userId: selectedUser.uid,
+        userName: selectedUser.fullName || selectedUser.email,
+        userEmail: selectedUser.email,
+        amount: parseFloat(convertArabicToEnglishDigits(payAmount)),
+        note: payNote.trim() || undefined
       });
-    }, 4000);
+
+      showToast('تم إنشاء الدفعة وإرسالها لصفحة سداد العميل بنجاح');
+      setIsAddPaymentOpen(false);
+      setPaySelectedUserId('');
+      setPaySelectedProjectId('');
+      setPayAmount('');
+      setPayNote('');
+    } catch (err: any) {
+      showToast(err.message || 'فشل إنشاء الدفعة');
+    } finally {
+      setIsCreatingPayment(false);
+    }
   };
 
-  // Handle Rejecting Quote
-  const handleRejectQuote = async (quote: QuoteRequest) => {
-    const notes = editingNotes[quote.id] || 'اعتذار عن قبول الطلب لعدم توفر الميزانية أو السعة التشغيلية.';
-    await updateQuoteStatus(quote.id, 'rejected', notes);
+  // Handle Image Upload for Portfolio
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showToast('يرجى اختيار ملف صورة صالح (PNG, JPG, WebP)');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setPortfolioImage(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
-  // -------------------------------------------------------------
-  // ADMIN AUTH GATE SCREEN (If user email is not mfb.15@icloud.com)
-  // -------------------------------------------------------------
-  if (!isAdminUnlocked) {
+  // Handle Add / Edit Portfolio Project
+  const handleOpenPortfolioModal = (item?: PortfolioProject) => {
+    if (item) {
+      setEditingPortfolioItem(item);
+      setPortfolioTitle(item.title);
+      setPortfolioLink(item.linkUrl);
+      setPortfolioImage(item.imageUrl);
+    } else {
+      setEditingPortfolioItem(null);
+      setPortfolioTitle('');
+      setPortfolioLink('');
+      setPortfolioImage('');
+    }
+    setIsPortfolioModalOpen(true);
+  };
+
+  const handleSavePortfolio = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!portfolioTitle.trim() || !portfolioImage.trim()) {
+      showToast('يرجى كتابة اسم المشروع وإرفاق الصورة من الجهاز');
+      return;
+    }
+
+    setIsSavingPortfolio(true);
+    try {
+      if (editingPortfolioItem) {
+        await updatePortfolioProject(editingPortfolioItem.id, {
+          title: portfolioTitle.trim(),
+          linkUrl: portfolioLink.trim(),
+          imageUrl: portfolioImage.trim()
+        });
+        showToast('تم تحديث بيانات المشروع بالمعرض بنجاح');
+      } else {
+        await addPortfolioProject({
+          title: portfolioTitle.trim(),
+          linkUrl: portfolioLink.trim(),
+          imageUrl: portfolioImage.trim()
+        });
+        showToast('تم إضافة المشروع لمعرض أعمالنا بنجاح');
+      }
+      setIsPortfolioModalOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'حدث خطأ أثناء حفظ المشروع');
+    } finally {
+      setIsSavingPortfolio(false);
+    }
+  };
+
+  const handleDeletePortfolio = async (id: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا المشروع من المعرض؟')) return;
+    try {
+      await deletePortfolioProject(id);
+      showToast('تم حذف المشروع من المعرض بنجاح');
+    } catch (err: any) {
+      showToast(err.message || 'فشل حذف المشروع');
+    }
+  };
+
+  // Handle Add Staff from registered users
+  const handleAssignStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedStaffUserId) {
+      showToast('يرجى اختيار مستخدم من القائمة لتعيينه كموظف');
+      return;
+    }
+
+    const targetUser = allUsers.find(u => u.uid === selectedStaffUserId);
+    if (!targetUser) {
+      showToast('المستخدم المحدد غير موجود');
+      return;
+    }
+
+    setIsSavingStaff(true);
+    try {
+      await addStaffMember({
+        userId: targetUser.uid,
+        fullName: targetUser.fullName || targetUser.email.split('@')[0],
+        email: targetUser.email,
+        phone: targetUser.phone || '',
+        role: 'developer',
+        roleLabel: staffRoleLabel.trim() || 'مطور برمجيات',
+        department: 'قسم البرمجة',
+        status: 'active',
+        assignedProjectsCount: 0
+      });
+
+      showToast(`تم تعيين ${targetUser.fullName || targetUser.email} كموظف بنجاح`);
+      setIsAddStaffOpen(false);
+      setSelectedStaffUserId('');
+    } catch (err: any) {
+      showToast(err.message || 'فشل تعيين الموظف');
+    } finally {
+      setIsSavingStaff(false);
+    }
+  };
+
+  // Handle Delete Staff
+  const handleDeleteStaff = async (id: string) => {
+    if (!window.confirm('هل أنت متأكد من إزالة هذا الموظف وإعادة صلاحياته كعميل؟')) return;
+    try {
+      await deleteStaffMember(id);
+      showToast('تم حذف الموظف وإعادة صلاحياته بنجاح');
+    } catch (err: any) {
+      showToast(err.message || 'فشل حذف الموظف');
+    }
+  };
+
+  // Metrics
+  const totalPaidRevenue = payments
+    .filter(p => p.status === 'approved')
+    .reduce((acc, curr) => acc + curr.amount, 0);
+
+  const pendingQuotesCount = quotes.filter(q => q.status === 'pending').length;
+  const pendingReceiptsCount = payments.filter(p => p.status === 'pending').length;
+
+  // FULL PAGE VIEW WHEN A QUOTE IS SELECTED IN ADMIN
+  if (selectedQuote) {
+    const orderCode = selectedQuote.orderCode || getOrderCodeForQuote(selectedQuote.id);
+    const clientProfile = allUsers.find(u => u.uid === selectedQuote.userId || u.email.toLowerCase() === selectedQuote.userEmail?.toLowerCase());
+    const realName = clientProfile?.fullName || selectedQuote.userName || selectedQuote.userEmail;
+    const realPhone = clientProfile?.phone || selectedQuote.userPhone || '';
+    const cleanDigits = convertArabicToEnglishDigits(realPhone).replace(/[^0-9]/g, '');
+    const waNumber = cleanDigits.startsWith('966') ? cleanDigits : (cleanDigits.startsWith('05') ? '966' + cleanDigits.substring(1) : cleanDigits);
+
     return (
-      <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] flex items-center justify-center p-4 relative" dir="rtl">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-600/20 rounded-full blur-[140px] pointer-events-none" />
+      <div className="min-h-screen bg-slate-50 text-slate-900 pb-32 font-['Tajawal',sans-serif] relative overflow-x-hidden" dir="rtl">
+        {/* Toast Notification */}
+        <AnimatePresence>
+          {toastMessage && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-3.5 rounded-2xl shadow-xl border border-slate-700 text-xs font-bold flex items-center gap-2"
+            >
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <span>{toastMessage}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6 relative z-10 text-right"
-        >
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 bg-indigo-600/20 text-indigo-400 rounded-2xl flex items-center justify-center mx-auto border border-indigo-500/30">
-              <ShieldCheck className="w-8 h-8" />
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+            <button
+              onClick={() => setSelectedQuote(null)}
+              className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-800 font-bold text-xs rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
+            >
+              <ChevronLeft className="w-4 h-4 rotate-180" />
+              <span>العودة لقائمة الطلبات</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <span className="font-mono font-black text-sm px-3 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100">
+                #{orderCode}
+              </span>
+              <span className="text-xs font-bold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg">
+                {selectedQuote.serviceTypeLabel || 'طلب برمجة'}
+              </span>
             </div>
-            <h1 className="text-2xl font-black text-white">لوحة تحكم الإدارة والمشرفين</h1>
-            <p className="text-xs text-slate-400">
-              {otpSent ? 'أدخل رمز التحقق (OTP) المكون من 6 أرقام للدخول' : 'يرجى تأكيد البريد الإلكتروني المصرح له بالدخول'}
-            </p>
           </div>
 
-          {!otpSent ? (
-            <form onSubmit={handleSendAdminOtp} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">البريد الإلكتروني للإدارة</label>
-                <div className="relative">
-                  <Mail className="w-5 h-5 text-slate-400 absolute right-3.5 top-3.5" />
-                  <input
-                    type="email"
-                    required
-                    value={inputEmail}
-                    onChange={(e) => setInputEmail(e.target.value)}
-                    placeholder="mfb-15@hotmail.com"
-                    className="w-full pl-4 pr-11 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-indigo-500 outline-none"
-                    dir="ltr"
-                  />
-                </div>
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xs space-y-6 text-right">
+            <div className="space-y-2 border-b border-slate-100 pb-4">
+              <h1 className="text-2xl font-black text-slate-900">{selectedQuote.title}</h1>
+              <p className="text-xs text-slate-500">اسم صاحب الطلب: <strong className="text-slate-900">{realName}</strong></p>
+            </div>
+
+            {/* Client Contact Info */}
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 text-xs">
+              <span className="font-extrabold text-slate-800 text-sm block">بيانات العميل والتواصل:</span>
+              <div className="flex flex-wrap items-center gap-4 text-slate-700 font-bold">
+                <span>اسم العميل: {realName}</span>
+                {realPhone && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="font-mono">رقم الجوال: {realPhone}</span>
+                  </>
+                )}
               </div>
 
-              {gateError && (
-                <div className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3.5 rounded-xl border border-rose-500/20 text-right flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>{gateError}</span>
+              {realPhone && (
+                <div className="flex items-center gap-3 pt-2">
+                  <a
+                    href={`https://wa.me/${waNumber}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-2 transition-all shadow-xs text-xs"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>محادثة واتساب ({realPhone})</span>
+                  </a>
+                  <a
+                    href={`tel:${realPhone}`}
+                    className="px-4 py-2.5 bg-slate-100 text-slate-800 hover:bg-slate-200 rounded-xl font-bold flex items-center gap-2 transition-all border border-slate-200 text-xs"
+                  >
+                    <Phone className="w-4 h-4" />
+                    <span>اتصال هاتفي</span>
+                  </a>
                 </div>
               )}
+            </div>
 
-              <button
-                type="submit"
-                disabled={isSendingLink}
-                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                <span>{isSendingLink ? 'جاري إرسال رمز التحقق...' : 'إرسال رمز التحقق (OTP)'}</span>
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleVerifyAdminOtp} className="space-y-5">
-              <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3 text-center">
-                <span className="text-xs text-slate-400 block mb-1">تم إرسال الرمز إلى:</span>
-                <span className="font-mono font-bold text-indigo-300 text-sm dir-ltr">{PRIMARY_ADMIN_EMAIL}</span>
-              </div>
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 text-xs sm:text-sm space-y-2">
+              <span className="font-bold text-slate-800 block text-sm">تفاصيل الفكرة والمواصفات:</span>
+              <p className="text-slate-700 leading-relaxed whitespace-pre-line">{selectedQuote.details}</p>
+            </div>
 
+            {/* Price & Approval Form */}
+            <div className="space-y-4 pt-4 border-t border-slate-100">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-2 text-center">أدخل رمز التحقق (6 أرقام)</label>
-                <OtpInput
-                  value={otpCode}
-                  onChange={setOtpCode}
-                  disabled={isVerifyingOtp}
-                  autoFocus={true}
+                <label className="block text-xs font-extrabold text-slate-800 mb-1.5">السعر المتفق عليه النهائي (ر.س)</label>
+                <input
+                  type="number"
+                  value={modalAgreedPrice}
+                  onChange={(e) => setModalAgreedPrice(e.target.value)}
+                  placeholder="مثال: 18000"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-black text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
-              {gateError && (
-                <div className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3.5 rounded-xl border border-rose-500/20 text-right flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>{gateError}</span>
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-extrabold text-slate-800 mb-1.5">ملاحظات الإدارة / تفاصيل الاتفاق</label>
+                <textarea
+                  rows={3}
+                  value={modalStaffNotes}
+                  onChange={(e) => setModalStaffNotes(e.target.value)}
+                  placeholder="اكتب ملاحظات العرض ومواعيد التسليم..."
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
 
-              <button
-                type="submit"
-                disabled={isVerifyingOtp || otpCode.length !== 6}
-                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>{isVerifyingOtp ? 'جاري التحقق...' : 'تحقق وتأكيد الدخول'}</span>
-              </button>
+              <div>
+                <label className="block text-xs font-extrabold text-slate-800 mb-1.5">سبب الاعتذار (في حال رفض الطلب)</label>
+                <input
+                  type="text"
+                  value={modalRejectionReason}
+                  onChange={(e) => setModalRejectionReason(e.target.value)}
+                  placeholder="اكتب سبب الاعتذار للعميل إن وجد..."
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
 
-              <div className="flex gap-2">
+              <div className="flex items-center gap-3 pt-3">
                 <button
-                  type="button"
-                  disabled={isSendingLink}
-                  onClick={handleSendAdminOtp}
-                  className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-all cursor-pointer"
+                  disabled={isSavingQuote}
+                  onClick={() => handleUpdateQuote('accepted')}
+                  className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-100 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  إعادة إرسال الرمز
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>قبول الطلب</span>
                 </button>
+
                 <button
-                  type="button"
-                  onClick={() => {
-                    setOtpSent(false);
-                    setOtpCode('');
-                    setGateError('');
-                  }}
-                  className="py-3 px-4 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-400 font-bold text-xs transition-all cursor-pointer"
+                  disabled={isSavingQuote}
+                  onClick={() => handleUpdateQuote('rejected')}
+                  className="px-6 py-3.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-xs rounded-xl border border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  رجوع
+                  <span>الاعتذار عن الطلب</span>
                 </button>
               </div>
-            </form>
-          )}
-        </motion.div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
-  // Calculate statistics
-  const totalClients = allUsers.length || quotes.length;
-  const totalQuotes = quotes.length;
-  const acceptedQuotes = quotes.filter(q => q.status === 'accepted').length;
-  const pendingPayments = payments.filter(p => p.status === 'pending').length;
-  const totalRevenue = quotes.reduce((acc, q) => acc + (q.agreedPrice || 0), 0);
-
-  // Is staff user (only allowed tabs 1, 2, 3)
-  const isStaffOnly = user?.role === 'staff' && user?.email?.toLowerCase() !== PRIMARY_ADMIN_EMAIL.toLowerCase();
-
   return (
-    <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] pb-28 pt-8 px-4 sm:px-6 lg:px-8" dir="rtl">
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-32 font-['Tajawal',sans-serif] relative overflow-x-hidden selection:bg-indigo-500 selection:text-white" dir="rtl">
       
-      {/* Admin Dashboard Header */}
-      <div className="max-w-7xl mx-auto space-y-8">
-        
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs font-bold border border-indigo-500/30">
-                لوحة التحكم الإدارية
-              </span>
-              <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 rounded-full text-xs font-mono font-bold border border-emerald-500/30" dir="ltr">
-                {user?.email || 'مشرف النظام'}
-              </span>
-            </div>
-            <h1 className="text-3xl font-black text-white">إدارة الاستوديو البرمجي</h1>
-            <p className="text-xs text-slate-400 mt-1">
-              متابعة الإحصائيات، قبول عروض الأسعار، مراجعة الحوالات البنكية، وإدارة صلاحيات الموظفين
-            </p>
-          </div>
+      {/* Background Animated Gradient Blobs */}
+      <div className="absolute top-10 left-1/4 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-80 right-10 w-80 h-80 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="flex items-center gap-3">
-            <div className="px-4 py-2 bg-slate-800/80 rounded-2xl border border-slate-700 text-center">
-              <span className="block text-[10px] text-slate-400">إجمالي الطلبات</span>
-              <span className="text-lg font-black text-indigo-400 font-mono">OD-{quotes.length}</span>
-            </div>
-            <div className="px-4 py-2 bg-slate-800/80 rounded-2xl border border-slate-700 text-center">
-              <span className="block text-[10px] text-slate-400">إجمالي العملاء</span>
-              <span className="text-lg font-black text-emerald-400 font-mono">DS-{totalClients}</span>
-            </div>
-          </div>
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-3.5 rounded-2xl shadow-xl border border-slate-700 text-xs font-bold flex items-center gap-2"
+          >
+            <Sparkles className="w-4 h-4 text-indigo-400" />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 space-y-8">
+
+        {/* Minimal Top Bar with Logout Button */}
+        <div className="flex items-center justify-end pb-2 border-b border-slate-200/80">
+          <button
+            onClick={logout}
+            className="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>تسجيل الخروج</span>
+          </button>
         </div>
 
-        {/* SECTION 1: STATISTICS (TAB 1) */}
-        {activeTab === 'stats' && (
+        {/* TAB 1: DASHBOARD OVERVIEW (HOME) */}
+        {activeTab === 'home' && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-            <h2 className="text-2xl font-black text-white flex items-center gap-2">
-              <BarChart3 className="w-6 h-6 text-indigo-400" />
-              <span>إحصائيات وأداء المنصة</span>
-            </h2>
-
-            {/* Metrics cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <motion.div whileHover={{ scale: 1.02, y: -2 }} className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-2 transition-all">
-                <span className="text-xs font-bold text-slate-400">عدد العملاء المسجلين</span>
-                <div className="text-3xl font-black text-white font-mono flex items-baseline gap-2">
-                  <span>{totalClients}</span>
-                  <span className="text-xs text-indigo-400 font-sans">عميل (DS-1 إلى DS-{totalClients || 1})</span>
+            {/* Quick Stats Grid */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                <span className="text-xs font-semibold text-slate-400">إجمالي الطلبات</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-3xl font-black text-slate-900">{quotes.length}</span>
+                  <FileText className="w-5 h-5 text-indigo-600" />
                 </div>
-              </motion.div>
+              </div>
 
-              <motion.div whileHover={{ scale: 1.02, y: -2 }} className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-2 transition-all">
-                <span className="text-xs font-bold text-slate-400">إجمالي طلبات الأسعار</span>
-                <div className="text-3xl font-black text-indigo-400 font-mono flex items-baseline gap-2">
-                  <span>{totalQuotes}</span>
-                  <span className="text-xs text-slate-400 font-sans">طلب (OD-1 إلى OD-{totalQuotes || 1})</span>
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                <span className="text-xs font-semibold text-slate-400">طلبات بانتظار المراجعة</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-3xl font-black text-amber-600">{pendingQuotesCount}</span>
+                  <Clock className="w-5 h-5 text-amber-500" />
                 </div>
-              </motion.div>
+              </div>
 
-              <motion.div whileHover={{ scale: 1.02, y: -2 }} className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-2 transition-all">
-                <span className="text-xs font-bold text-slate-400">عروض الأسعار المقبولة</span>
-                <div className="text-3xl font-black text-emerald-400 font-mono">
-                  {acceptedQuotes}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                <span className="text-xs font-semibold text-slate-400">إيصالات دفع معلقة</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-3xl font-black text-emerald-600">{pendingReceiptsCount}</span>
+                  <CreditCard className="w-5 h-5 text-emerald-500" />
                 </div>
-              </motion.div>
+              </div>
 
-              <motion.div whileHover={{ scale: 1.02, y: -2 }} className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-2 transition-all">
-                <span className="text-xs font-bold text-slate-400">قيمة العقود والمقترحات</span>
-                <div className="text-3xl font-black text-teal-300 font-mono">
-                  {totalRevenue.toLocaleString('ar-SA')} <span className="text-xs font-sans">ر.س</span>
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                <span className="text-xs font-semibold text-slate-400">إجمالي الإيراد المحصل</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-2xl font-black text-slate-900">{totalPaidRevenue.toLocaleString('ar-SA')} ر.س</span>
+                  <DollarSign className="w-5 h-5 text-teal-600" />
                 </div>
-              </motion.div>
+              </div>
             </div>
 
-            {/* Recent Orders Overview */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-4">
-              <h3 className="text-lg font-bold text-white">آخر الطلبات والمشاريع النشطة</h3>
-              {quotes.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500 border border-slate-800 rounded-2xl">
-                  لا توجد طلبات عروض أسعار مسجلة حالياً.
+            {/* Recent Quotes Quick Table */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-indigo-600" />
+                  <span>أحدث طلبات البرمجة الواردة</span>
+                </h2>
+                <button
+                  onClick={() => setActiveTab('requests')}
+                  className="text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1"
+                >
+                  <span>عرض الكل ({quotes.length})</span>
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {quotes.slice(0, 6).map((q) => {
+                  const orderCode = q.orderCode || getOrderCodeForQuote(q.id);
+                  return (
+                    <div
+                      key={q.id}
+                      onClick={() => openQuoteModal(q)}
+                      className="p-5 rounded-2xl bg-slate-50 hover:bg-indigo-50/50 border border-slate-200/80 hover:border-indigo-200 transition-all cursor-pointer space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-bold text-xs text-indigo-600">#{orderCode}</span>
+                        {q.status === 'pending' && <span className="text-[11px] font-bold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md">قيد المراجعة</span>}
+                        {q.status === 'accepted' && <span className="text-[11px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md">مقبول</span>}
+                        {q.status === 'rejected' && <span className="text-[11px] font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md">معتذر عنه</span>}
+                      </div>
+                      <h4 className="font-bold text-slate-900 text-sm truncate">{q.title}</h4>
+                      <p className="text-xs text-slate-500 truncate">{q.userName || q.userEmail}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* TAB 2: QUOTE REQUESTS MANAGEMENT */}
+        {activeTab === 'requests' && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">طلبات البرمجة</h2>
+                <p className="text-xs text-slate-500 mt-1">انقر على أي طلب لتحديد السعر المتفق عليه وقبوله أو الاعتذار</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              {quotes.map((quote) => {
+                const orderCode = quote.orderCode || getOrderCodeForQuote(quote.id);
+                return (
+                  <div
+                    key={quote.id}
+                    onClick={() => openQuoteModal(quote)}
+                    className="bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-indigo-300 rounded-2xl p-5 shadow-xs transition-all cursor-pointer flex items-center justify-between gap-4"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                        <span className="font-mono font-black text-sm">#{orderCode}</span>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-extrabold text-slate-900">{quote.title}</h3>
+                        <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                          <span>العميل: {quote.userName || quote.userEmail}</span>
+                          <span>•</span>
+                          <span>{quote.serviceTypeLabel || 'تطبيق جوال'}</span>
+                          {quote.agreedPrice && (
+                            <>
+                              <span>•</span>
+                              <span className="text-indigo-600 font-bold">السعر: {quote.agreedPrice.toLocaleString('ar-SA')} ر.س</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {quote.status === 'pending' && (
+                        <span className="px-3 py-1.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold">
+                          قيد المراجعة
+                        </span>
+                      )}
+                      {quote.status === 'accepted' && (
+                        <span className="px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold">
+                          تم القبول
+                        </span>
+                      )}
+                      {quote.status === 'rejected' && (
+                        <span className="px-3 py-1.5 bg-rose-50 text-rose-800 border border-rose-200 rounded-xl text-xs font-bold">
+                          تم الاعتذار
+                        </span>
+                      )}
+                      <ChevronLeft className="w-5 h-5 text-slate-400" />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
+        {/* TAB 3: PAYMENTS & INVOICES */}
+        {activeTab === 'payments' && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">المدفوعات وسداد العملاء</h2>
+                <p className="text-xs text-slate-500 mt-1">إنشاء الدفعات ومراجعة إيصالات التحويل البنكي والاعتماد</p>
+              </div>
+
+              <button
+                onClick={() => setIsAddPaymentOpen(true)}
+                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center gap-2 cursor-pointer self-start"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إضافة دفعة لعميل</span>
+              </button>
+            </div>
+
+            {/* Payments List */}
+            <div className="space-y-4">
+              {payments.length === 0 ? (
+                <div className="p-10 bg-white rounded-3xl border border-slate-200 text-center space-y-3">
+                  <CreditCard className="w-10 h-10 text-slate-300 mx-auto" />
+                  <p className="text-slate-500 text-xs font-bold">لا توجد دفعات منشأة حالياً</p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-800">
-                  {quotes.slice(0, 5).map((q, idx) => (
-                    <div key={q.id} className="py-4 flex items-center justify-between gap-4">
+                <div className="grid grid-cols-1 gap-4">
+                  {payments.map((pay) => (
+                    <div
+                      key={pay.id}
+                      className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4"
+                    >
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-md font-mono">
-                            {q.orderCode || `OD-${quotes.length - idx}`}
+                          <span className="text-xs font-mono font-bold px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md">
+                            {pay.id}
                           </span>
-                          <span className="text-xs font-bold px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-md font-mono">
-                            {getClientCodeForUser(q.userId)}
-                          </span>
-                          <span className="text-sm font-bold text-white">{q.title}</span>
+                          <span className="text-xs font-bold text-slate-400">المشروع: {pay.projectTitle}</span>
                         </div>
-                        <p className="text-xs text-slate-400">العميل: {q.userName} | {q.userPhone}</p>
+                        <h3 className="text-base font-extrabold text-slate-900">{pay.userName || pay.userEmail}</h3>
+                        <p className="text-xs text-slate-500">
+                          المبلغ المطلوب: <strong className="text-indigo-700 text-sm font-black">{pay.amount.toLocaleString('ar-SA')} ر.س</strong>
+                        </p>
+                        {pay.senderName && (
+                          <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100 mt-2 space-y-1">
+                            <div>اسم المحول: <strong>{pay.senderName}</strong> | البنك: <strong>{pay.bankName}</strong></div>
+                            <div>الرقم المرجعي: <span className="font-mono">{pay.referenceNumber || '-'}</span> | التاريخ: {pay.transferDate}</div>
+                            {pay.receiptImage && (
+                              <a
+                                href={pay.receiptImage}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-indigo-600 font-bold mt-1 underline"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>عرض صورة إيصال التحويل المرفق</span>
+                              </a>
+                            )}
+                          </div>
+                        )}
                       </div>
 
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        q.status === 'accepted' ? 'bg-emerald-500/20 text-emerald-300' :
-                        q.status === 'rejected' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
-                      }`}>
-                        {q.status === 'accepted' ? 'مقبول' : q.status === 'rejected' ? 'مرفوض' : 'قيد المراجعة'}
-                      </span>
+                      {/* Status & Actions */}
+                      <div className="flex items-center gap-3 self-end md:self-center">
+                        {pay.status === 'due' && (
+                          <span className="px-3 py-1.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold">
+                            بانتظار سداد العميل
+                          </span>
+                        )}
+
+                        {pay.status === 'pending' && (
+                          <div className="flex items-center gap-2">
+                            <span className="px-3 py-1.5 bg-blue-50 text-blue-800 border border-blue-200 rounded-xl text-xs font-bold">
+                              تم إرفاق الإيصال
+                            </span>
+                            <button
+                              onClick={() => approveOrRejectPayment(pay.id, 'approved')}
+                              title="اعتماد الإيصال ✓"
+                              className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer shadow-xs"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => approveOrRejectPayment(pay.id, 'rejected')}
+                              title="رفض الإيصال ✕"
+                              className="p-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer shadow-xs"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+
+                        {pay.status === 'approved' && (
+                          <span className="px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>تم التحقق والاعتماد ✓</span>
+                          </span>
+                        )}
+
+                        {pay.status === 'rejected' && (
+                          <span className="px-3 py-1.5 bg-rose-50 text-rose-800 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1">
+                            <XCircle className="w-4 h-4 text-rose-600" />
+                            <span>تم رفض الإيصال</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -417,374 +804,418 @@ export const AdminPage: React.FC = () => {
           </motion.div>
         )}
 
-        {/* SECTION 2: QUOTES & ORDERS (TAB 2) */}
-        {activeTab === 'quotes' && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-            <h2 className="text-2xl font-black text-white flex items-center gap-2">
-              <FileText className="w-6 h-6 text-indigo-400" />
-              <span>عروض الأسعار والاتفاق المالي</span>
-            </h2>
-
-            {quotes.length === 0 ? (
-              <div className="p-12 bg-slate-900 border border-slate-800 rounded-3xl text-center text-slate-400 text-xs">
-                لا توجد طلبات عروض أسعار مسجلة في الوقت الحالي.
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {quotes.map((quote, idx) => {
-                  const orderCode = quote.orderCode || `OD-${quotes.length - idx}`;
-                  const clientCode = getClientCodeForUser(quote.userId);
-                  const cleanPhone = convertArabicToEnglishDigits(quote.userPhone).replace(/\s+/g, '');
-                  const currentAgreedPrice = editingPrices[quote.id] ?? (quote.agreedPrice?.toString() || '');
-
-                  return (
-                    <div key={quote.id} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6">
-                      
-                      {/* Header bar */}
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="px-3 py-1 bg-indigo-600/30 text-indigo-300 font-mono text-xs font-bold rounded-lg border border-indigo-500/30">
-                              رقم الطلب: {orderCode}
-                            </span>
-                            <span className="px-3 py-1 bg-emerald-600/30 text-emerald-300 font-mono text-xs font-bold rounded-lg border border-emerald-500/30">
-                              رقم العميل: {clientCode}
-                            </span>
-                            <span className="text-xs px-2.5 py-0.5 bg-slate-800 text-slate-300 rounded-md">
-                              {quote.serviceTypeLabel}
-                            </span>
-                          </div>
-                          <h3 className="text-xl font-bold text-white mt-2">{quote.title}</h3>
-                          <p className="text-xs text-slate-400">مقدم من: <strong className="text-slate-200">{quote.userName}</strong> ({quote.userEntityType === 'company' ? quote.companyName || 'شركة' : 'فرد'})</p>
-                        </div>
-
-                        {/* Status Badge */}
-                        <div>
-                          {quote.status === 'pending' && (
-                            <span className="px-4 py-2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold">
-                              بانتظار تحديد السعر وقبول العرض
-                            </span>
-                          )}
-                          {quote.status === 'accepted' && (
-                            <span className="px-4 py-2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                              <span>تم القبول وتثبيت الطلب</span>
-                            </span>
-                          )}
-                          {quote.status === 'rejected' && (
-                            <span className="px-4 py-2 bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold">
-                              تم الاعتذار عن الطلب
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Details */}
-                      <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/50 p-4 rounded-2xl border border-slate-800">
-                        <strong className="text-indigo-300">التفاصيل والمواصفات: </strong> {quote.details}
-                      </p>
-
-                      {/* ACTION & WHATSAPP AGREEMENT SECTION */}
-                      <div className="p-6 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-4">
-                        
-                        {/* Contact & WhatsApp Button */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                          <div>
-                            <span className="block text-[11px] text-slate-400">رقم جوال العميل للتواصل:</span>
-                            <span className="font-mono text-sm font-bold text-white" dir="ltr">{quote.userPhone}</span>
-                          </div>
-
-                          <a
-                            href={`https://wa.me/966${cleanPhone.replace(/^0+/, '')}?text=${encodeURIComponent(`السلام عليكم ${quote.userName}، تحدثك إدارة استوديو البرمجة بخصوص طلبكم #${orderCode} (${quote.title}).`)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
-                          >
-                            <MessageCircle className="w-4 h-4" />
-                            <span>تحويل جاهز للواتس اب للاتفاق على المبلغ</span>
-                          </a>
-                        </div>
-
-                        {/* Price Input & Confirmation */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-xs font-bold text-slate-300 mb-1.5">كتابة المبلغ المتفق عليه (ر.س)</label>
-                            <input
-                              type="number"
-                              placeholder="مثال: 15000"
-                              value={currentAgreedPrice}
-                              onChange={(e) => setEditingPrices({ ...editingPrices, [quote.id]: e.target.value })}
-                              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono font-bold text-sm outline-none focus:border-indigo-500"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-bold text-slate-300 mb-1.5">ملاحظات التوثيق للموظف</label>
-                            <input
-                              type="text"
-                              placeholder="تم الاتفاق مع العميل هاتفياً..."
-                              value={editingNotes[quote.id] ?? (quote.staffNotes || '')}
-                              onChange={(e) => setEditingNotes({ ...editingNotes, [quote.id]: e.target.value })}
-                              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs outline-none focus:border-indigo-500"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Confirmation buttons */}
-                        <div className="flex items-center gap-3 pt-2">
-                          <button
-                            onClick={() => handleConfirmQuotePrice(quote)}
-                            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2 cursor-pointer"
-                          >
-                            <Check className="w-4 h-4" />
-                            <span>تأكيد المبلغ وإتمام الطلب بنجاح</span>
-                          </button>
-
-                          {quote.status !== 'rejected' && (
-                            <button
-                              onClick={() => handleRejectQuote(quote)}
-                              className="px-4 py-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-bold text-xs rounded-xl border border-rose-500/30 transition-all cursor-pointer"
-                            >
-                              رفض العرض
-                            </button>
-                          )}
-                        </div>
-
-                        {confirmSuccessMsg[quote.id] && (
-                          <div className="p-3 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold rounded-xl text-center">
-                            {confirmSuccessMsg[quote.id]}
-                          </div>
-                        )}
-
-                      </div>
-
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {/* SECTION 3: PAYMENTS & RECEIPTS (TAB 3) */}
-        {activeTab === 'payments' && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-            <h2 className="text-2xl font-black text-white flex items-center gap-2">
-              <DollarSign className="w-6 h-6 text-indigo-400" />
-              <span>مراجعة وقبول الدفعات والحوالات</span>
-            </h2>
-
-            {payments.length === 0 ? (
-              <div className="p-12 bg-slate-900 border border-slate-800 rounded-3xl text-center text-slate-400 text-xs">
-                لا توجد دفعات أو إيصالات تحويل بانتظار المراجعة.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {payments.map((pay) => (
-                  <div key={pay.id} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-4">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-mono font-bold px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-md">
-                            {pay.amount.toLocaleString('ar-SA')} ر.س
-                          </span>
-                          <span className="text-xs font-bold text-slate-400">البنك: {pay.bankName}</span>
-                        </div>
-                        <h3 className="text-lg font-bold text-white">{pay.projectTitle}</h3>
-                        <p className="text-xs text-slate-400">اسم المحول: <strong className="text-white">{pay.senderName}</strong> | الرقم المرجعي: <span className="font-mono text-indigo-300">{pay.referenceNumber}</span></p>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {pay.status === 'pending' ? (
-                          <>
-                            <button
-                              onClick={() => approveOrRejectPayment(pay.id, 'approved', 'تم التحقق واستلام المبلغ في الحساب البنكي')}
-                              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer"
-                            >
-                              قبول الدفعة
-                            </button>
-                            <button
-                              onClick={() => approveOrRejectPayment(pay.id, 'rejected', 'بيانات التحويل غير مطابقة')}
-                              className="px-4 py-2.5 bg-rose-500/20 text-rose-300 font-bold text-xs rounded-xl border border-rose-500/30 cursor-pointer"
-                            >
-                              رفض الدفعة
-                            </button>
-                          </>
-                        ) : (
-                          <span className={`px-4 py-2 rounded-xl text-xs font-bold ${pay.status === 'approved' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`}>
-                            الحالة: {pay.status === 'approved' ? 'مقبولة ✓' : 'مرفوضة'}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {pay.receiptNote && (
-                      <p className="text-xs text-slate-300 bg-slate-800/60 p-3.5 rounded-xl border border-slate-800">
-                        ملاحظة العميل بالإيصال: {pay.receiptNote}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {/* SECTION 4: PERMISSIONS & USERS (TAB 4 - PASSWORD PROTECTED WITH 2011) */}
-        {activeTab === 'users' && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        {/* TAB 4: PORTFOLIO MANAGEMENT */}
+        {activeTab === 'portfolio' && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-black text-white flex items-center gap-2">
-                  <Users className="w-6 h-6 text-indigo-400" />
-                  <span>إدارة المستخدمين وصلاحيات الموظفين</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">قسم محمي بكلمة مرور خاصة لتعيين وتفويض الموظفين</p>
+                <h2 className="text-2xl font-black text-slate-900">معرض أعمالنا</h2>
               </div>
 
-              <span className="px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-xs font-bold flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5" />
-                <span>محمي بكلمة مرور (2011)</span>
-              </span>
+              <button
+                onClick={() => handleOpenPortfolioModal()}
+                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center gap-2 cursor-pointer self-start"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إضافة مشروع للمعرض</span>
+              </button>
             </div>
 
-            {/* PASSWORD GATE FOR SECTION 4 */}
-            {!usersSectionUnlocked ? (
-              <div className="max-w-md mx-auto bg-slate-900 border border-slate-800 p-8 rounded-3xl text-center space-y-6 shadow-2xl">
-                <div className="w-14 h-14 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mx-auto border border-amber-500/30">
-                  <Lock className="w-7 h-7" />
+            {/* Portfolio Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {portfolioList.map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+                >
+                  <div className="relative aspect-video w-full bg-slate-100 overflow-hidden">
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+
+                  <div className="p-6 space-y-4">
+                    <div>
+                      <h3 className="text-base font-extrabold text-slate-900">{item.title}</h3>
+                      {item.linkUrl && (
+                        <a
+                          href={item.linkUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 mt-1"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>رابط المشروع</span>
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => handleOpenPortfolioModal(item)}
+                        className="p-2 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-xl transition-colors cursor-pointer"
+                        title="تعديل المشروع"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeletePortfolio(item.id)}
+                        className="p-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-xl transition-colors cursor-pointer"
+                        title="حذف المشروع"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* TAB 5: STAFF & TEAM MANAGEMENT */}
+        {activeTab === 'staff' && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">فريق العمل والموظفين</h2>
+                <p className="text-xs text-slate-500 mt-1">إدارة الموظفين ومنحهم الصلاحيات الإدارية</p>
+              </div>
+
+              {isMasterAdmin && (
+                <button
+                  onClick={() => setIsAddStaffOpen(true)}
+                  className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center gap-2 cursor-pointer self-start"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>تعيين موظف</span>
+                </button>
+              )}
+            </div>
+
+            {/* Staff List */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {staffList.map((stf) => (
+                <div
+                  key={stf.id}
+                  className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 flex flex-col justify-between"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-black text-base flex items-center justify-center">
+                      {stf.fullName.charAt(0)}
+                    </div>
+                    <div>
+                      <h3 className="text-base font-extrabold text-slate-900">{stf.fullName}</h3>
+                      <p className="text-xs text-slate-500">{stf.email}</p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs space-y-1">
+                    <div className="text-slate-500">المسمى: <strong className="text-slate-900">{stf.roleLabel || 'مطور برمجيات'}</strong></div>
+                    <div className="text-slate-500">الحالة: <span className="text-emerald-700 font-bold">نشط ومفعل</span></div>
+                  </div>
+
+                  {isMasterAdmin && (
+                    <button
+                      onClick={() => handleDeleteStaff(stf.id)}
+                      className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>إلغاء صلاحيات الموظف</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+      </div>
+
+      {/* FLOATING GLASS BOTTOM NAVIGATION BAR FOR ADMIN */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 font-['Tajawal',sans-serif]">
+        <nav className="bg-white/80 backdrop-blur-2xl border border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.15)] rounded-full px-6 py-3 flex items-center justify-center gap-6 sm:gap-8 transition-all">
+          {[
+            { id: 'home', label: 'الرئيسية', icon: Home },
+            { id: 'requests', label: 'الطلبات', icon: FileText },
+            { id: 'payments', label: 'الدفعات', icon: CreditCard },
+            { id: 'portfolio', label: 'المعرض', icon: Layers },
+            { id: 'staff', label: 'الموظفين', icon: User },
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id as any)}
+                title={item.label}
+                className={`p-2.5 rounded-full transition-all cursor-pointer relative ${
+                  isActive
+                    ? 'bg-indigo-600 text-white scale-110 shadow-lg shadow-indigo-200'
+                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <Icon className="w-5 h-5" />
+                {isActive && (
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* MODAL 2: ADD PAYMENT DUE FOR CLIENT */}
+      <AnimatePresence>
+        {isAddPaymentOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-6 text-right"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <h3 className="text-xl font-black text-slate-900">إضافة دفعة</h3>
+                <button onClick={() => setIsAddPaymentOpen(false)} className="p-2 text-slate-400 hover:text-slate-700">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreatePaymentDue} className="space-y-4 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">1. اختر العميل</label>
+                  <select
+                    required
+                    value={paySelectedUserId}
+                    onChange={(e) => handleClientSelectChange(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">-- اختر العميل --</option>
+                    {allUsers.map((u) => (
+                      <option key={u.uid} value={u.uid}>
+                        {u.fullName || 'عميل بدون اسم'}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-bold text-white">إدخال كلمة المرور السرية</h3>
-                  <p className="text-xs text-slate-400 mt-1">يرجى إدخال كلمة المرور المخصصة لدخول قسم إدارة صلاحيات المستخدمين والموظفين</p>
+                  <label className="block font-bold text-slate-800 mb-1">2. اختر مشروع العميل</label>
+                  <select
+                    required
+                    disabled={!paySelectedUserId}
+                    value={paySelectedProjectId}
+                    onChange={(e) => handleProjectSelectChange(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                  >
+                    <option value="">{paySelectedUserId ? '-- اختر المشروع التابع للعميل --' : '-- اختر العميل أولاً --'}</option>
+                    {clientProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.title} (السعر: {p.agreedPrice?.toLocaleString('ar-SA')} ر.س)
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <form onSubmit={handleVerifyPassword} className="space-y-4">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">3. مبلغ الدفعة (ر.س - تلقائي من المشروع)</label>
                   <input
-                    type="password"
+                    type="number"
                     required
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="أدخل كلمة المرور"
-                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-center font-mono text-lg outline-none focus:border-indigo-500"
+                    readOnly
+                    value={payAmount}
+                    placeholder="يتم تعبئته تلقائياً عند اختيار المشروع"
+                    className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl text-indigo-700 font-black text-sm focus:outline-none"
                   />
+                </div>
 
-                  {passwordError && (
-                    <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">{passwordError}</p>
-                  )}
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">ملاحظة أو وصف الدفعة (اختياري)</label>
+                  <input
+                    type="text"
+                    value={payNote}
+                    onChange={(e) => setPayNote(e.target.value)}
+                    placeholder="مثال: الدفعة الأولى عند البدء"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
 
+                <div className="pt-3 border-t border-slate-100">
                   <button
                     type="submit"
-                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all cursor-pointer"
+                    disabled={isCreatingPayment}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer"
                   >
-                    فتح القفل ودخول قسم المستخدمين
+                    {isCreatingPayment ? 'جاري الحفظ...' : 'إنشاء الدفعة وإرسالها للعميل'}
                   </button>
-                </form>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 3: PORTFOLIO ADD / EDIT WITH IMAGE UPLOAD FROM DEVICE */}
+      <AnimatePresence>
+        {isPortfolioModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-6 text-right"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <h3 className="text-xl font-black text-slate-900">
+                  {editingPortfolioItem ? 'تعديل مشروع بالمعرض' : 'إضافة مشروع جديد للمعرض'}
+                </h3>
+                <button onClick={() => setIsPortfolioModalOpen(false)} className="p-2 text-slate-400 hover:text-slate-700">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-            ) : (
-              /* UNLOCKED USERS & PERMISSIONS LIST */
-              <div className="space-y-6">
-                <div className="p-4 bg-emerald-950/60 border border-emerald-500/40 rounded-2xl text-xs text-emerald-300 font-bold flex items-center gap-2">
-                  <UserCheck className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <span>تم فتح قفل قسم المستخدمين بنجاح. يمكنك الآن الاطلاع على كافة العملاء وتعيين أو إلغاء صلاحية "موظف" لكل مستخدم.</span>
+
+              <form onSubmit={handleSavePortfolio} className="space-y-4 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">اسم المشروع</label>
+                  <input
+                    type="text"
+                    required
+                    value={portfolioTitle}
+                    onChange={(e) => setPortfolioTitle(e.target.value)}
+                    placeholder="مثال: تطبيق توصيل الطلبات السريعة"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden divide-y divide-slate-800">
-                  {allUsers.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-slate-500">
-                      لا يوجد مستخدمون مسجلون حالياً بملفات كاملة.
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">رابط المشروع أو المتجر (اختياري)</label>
+                  <input
+                    type="url"
+                    value={portfolioLink}
+                    onChange={(e) => setPortfolioLink(e.target.value)}
+                    placeholder="https://example.com"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-mono text-left focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    dir="ltr"
+                  />
+                </div>
+
+                {/* Device Image Upload */}
+                <div className="space-y-2">
+                  <label className="block font-bold text-slate-800">
+                    صورة المشروع (إرفاق من الجهاز بجودة عالية) <span className="text-[11px] font-normal text-slate-500">(المقاس المفضل: 1280×720 بكسل أو بنسبة 16:9)</span>
+                  </label>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
+
+                  {portfolioImage ? (
+                    <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-slate-200 group">
+                      <img src={portfolioImage} alt="معاينة" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="absolute inset-0 bg-slate-900/40 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 font-bold transition-opacity"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <span>تغيير الصورة</span>
+                      </button>
                     </div>
                   ) : (
-                    allUsers.map((u, i) => (
-                      <div key={u.uid} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 font-mono text-xs font-bold rounded-md">
-                              {u.clientCode || `DS-${i + 1}`}
-                            </span>
-                            <span className="font-bold text-white text-base">{u.fullName}</span>
-                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                              u.role === 'admin' ? 'bg-indigo-500/30 text-indigo-300' :
-                              u.role === 'staff' ? 'bg-emerald-500/30 text-emerald-300' : 'bg-slate-800 text-slate-400'
-                            }`}>
-                              {u.role === 'admin' ? 'مشرف رئيسي' : u.role === 'staff' ? 'موظف مصرح' : 'عميل'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-400">البريد: <span className="font-mono text-slate-200">{u.email}</span> | الجوال: <span className="font-mono text-slate-200">{u.phone}</span></p>
-                        </div>
-
-                        {u.email.toLowerCase() !== PRIMARY_ADMIN_EMAIL.toLowerCase() && (
-                          <button
-                            onClick={() => handleToggleStaffRole(u)}
-                            className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
-                              u.role === 'staff'
-                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30'
-                                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
-                            }`}
-                          >
-                            {u.role === 'staff' ? 'إلغاء صلاحية الموظف' : 'منح صلاحيات موظف'}
-                          </button>
-                        )}
-                      </div>
-                    ))
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full py-8 border-2 border-dashed border-slate-200 hover:border-indigo-400 rounded-2xl bg-slate-50 hover:bg-indigo-50/40 text-slate-500 flex flex-col items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Upload className="w-6 h-6 text-indigo-600" />
+                      <span className="font-bold text-xs text-slate-700">اضغط هنا لإرفاق الصورة من جهازك</span>
+                      <span className="text-[11px] text-slate-400">PNG, JPG, WebP بدقة عالية</span>
+                    </button>
                   )}
                 </div>
-              </div>
-            )}
-          </motion.div>
+
+                <div className="pt-3 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    disabled={isSavingPortfolio}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer"
+                  >
+                    {isSavingPortfolio ? 'جاري الحفظ...' : 'حفظ المشروع بالمعرض'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
         )}
+      </AnimatePresence>
 
-      </div>
-
-      {/* FIXED ADMIN BOTTOM BAR WITH 4 SECTIONS */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 py-3 px-4 shadow-2xl">
-        <div className="max-w-xl mx-auto grid grid-cols-4 gap-2 text-center">
-          
-          <button
-            onClick={() => setActiveTab('stats')}
-            className={`py-2 px-1 rounded-2xl flex flex-col items-center gap-1 text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'stats' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <BarChart3 className="w-5 h-5" />
-            <span className="text-[11px]">الإحصائيات</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('quotes')}
-            className={`py-2 px-1 rounded-2xl flex flex-col items-center gap-1 text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'quotes' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <FileText className="w-5 h-5" />
-            <span className="text-[11px]">عروض الأسعار</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('payments')}
-            className={`py-2 px-1 rounded-2xl flex flex-col items-center gap-1 text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'payments' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <DollarSign className="w-5 h-5" />
-            <span className="text-[11px]">الدفع والحوالات</span>
-          </button>
-
-          {!isStaffOnly && (
-            <button
-              onClick={() => setActiveTab('users')}
-              className={`py-2 px-1 rounded-2xl flex flex-col items-center gap-1 text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'users' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'
-              }`}
+      {/* MODAL 4: ADD STAFF (WITHOUT DEPARTMENT FIELD, SHORT BUTTON) */}
+      <AnimatePresence>
+        {isAddStaffOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-6 text-right"
             >
-              <Users className="w-5 h-5" />
-              <span className="text-[11px]">إدارة الصلاحيات</span>
-            </button>
-          )}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <h3 className="text-xl font-black text-slate-900">تعيين موظف جديد</h3>
+                <button onClick={() => setIsAddStaffOpen(false)} className="p-2 text-slate-400 hover:text-slate-700">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-        </div>
-      </div>
+              <form onSubmit={handleAssignStaff} className="space-y-4 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">اختر المستخدم المسجل</label>
+                  <select
+                    required
+                    value={selectedStaffUserId}
+                    onChange={(e) => setSelectedStaffUserId(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">-- اختر مستخدم من النظام --</option>
+                    {allUsers.map((u) => (
+                      <option key={u.uid} value={u.uid}>
+                        {u.fullName || u.email} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">المسمى الوظيفي</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffRoleLabel}
+                    onChange={(e) => setStaffRoleLabel(e.target.value)}
+                    placeholder="مثال: مطور برمجيات جوال"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    disabled={isSavingStaff}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer"
+                  >
+                    {isSavingStaff ? 'جاري التعيين...' : 'تعيين موظف'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

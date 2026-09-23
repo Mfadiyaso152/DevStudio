@@ -11,15 +11,13 @@ import {
   ArrowLeft, 
   Sparkles, 
   ShieldCheck, 
+  AlertCircle,
   KeyRound,
-  Lock,
-  Smartphone,
-  AlertCircle
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AccountType } from '../types';
 import { convertArabicToEnglishDigits } from '../lib/db';
-import { OtpInput } from '../components/OtpInput';
 
 export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navigate }) => {
   const { 
@@ -27,139 +25,152 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
     loginWithGoogle, 
     sendOtp,
     verifyOtp,
-    sendFirebaseEmailLink,
-    isVerifyingEmailLink,
-    emailLinkNeedsEmail,
-    emailLinkError,
-    resetEmailLinkState,
-    completeEmailLinkWithManualEmail
   } = useAuth();
 
-  // Wizard Step (1 to 4)
-  const [step, setStep] = useState<number>(1);
+  // Step: 
+  // 1 = Enter Email
+  // 'otp' = Enter 6-digit Code
+  // 2 = Choose Individual / Company
+  // 3 = Choose DOB
+  // 4 = Complete Full Name & Phone
+  const [step, setStep] = useState<number | 'otp'>(1);
 
-  // Auth Choice
-  const [authMethod, setAuthMethod] = useState<'google' | 'email'>('email');
   const [email, setEmail] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
+  const [otp, setOtp] = useState('');
+  const [cooldown, setCooldown] = useState<number>(0);
+  const [isSendingOtp, setIsSendingOtp] = useState<boolean>(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false);
 
-  const [manualEmail, setManualEmail] = useState('');
-  const [isSubmittingManual, setIsSubmittingManual] = useState(false);
-
-  // Step 2: Entity Type
+  // Registration wizard steps
   const [accountType, setAccountType] = useState<AccountType>('individual');
   const [companyName, setCompanyName] = useState('');
-
-  // Step 3: DOB - Default to 2010-01-01
   const [dob, setDob] = useState('2010-01-01');
-
-  // Step 4: Full Name & Phone
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
 
   const [errorMsg, setErrorMsg] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
 
-  // Handle Send 6-digit OTP via Resend Backend
-  const handleSendOtp = async () => {
+  // Start Cooldown timer
+  const startCooldown = (seconds: number) => {
+    setCooldown(seconds);
+    const interval = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // 1. Send OTP
+  const handleSendOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!email.trim() || !email.includes('@')) {
-      setErrorMsg('البريد الإلكتروني غير صحيح');
+      setErrorMsg('يرجى إدخال بريد إلكتروني صحيح');
       return;
     }
 
-    if (resendCooldown > 0) {
-      setErrorMsg(`يرجى الانتظار ${resendCooldown} ثانية قبل إعادة إرسال الرمز`);
-      return;
-    }
-
-    setIsLoading(true);
+    setIsSendingOtp(true);
     setErrorMsg('');
+    setSuccessMsg('');
 
     try {
       const res = await sendOtp(email.trim());
-      setOtpSent(true);
-
-      // Start 60s resend cooldown
-      setResendCooldown(res.cooldownSeconds || 60);
-      const timer = setInterval(() => {
-        setResendCooldown((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      setSuccessMsg(res.message || 'تم إرسال رمز التحقق إلى بريدك الإلكتروني');
+      startCooldown(res.cooldownSeconds || 60);
+      setStep('otp');
     } catch (err: any) {
-      setErrorMsg(err.message || 'فشل إرسال رمز التحقق، يرجى إعادة المحاولة');
+      setErrorMsg(err.message || 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى');
     } finally {
-      setIsLoading(false);
+      setIsSendingOtp(false);
     }
   };
 
-  // Handle Verify 6-digit OTP
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otpCode.trim() || otpCode.trim().length !== 6) {
+  // 2. Verify OTP
+  const handleVerifyOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!otp.trim() || otp.trim().length !== 6) {
       setErrorMsg('يرجى إدخال رمز التحقق المكون من 6 أرقام');
       return;
     }
 
-    setIsLoading(true);
+    setIsVerifyingOtp(true);
     setErrorMsg('');
+    setSuccessMsg('');
 
     try {
-      const userProfile = await verifyOtp(email.trim(), otpCode.trim());
+      const userProfile = await verifyOtp(email.trim(), otp.trim());
       if (userProfile) {
-        if (userProfile.role === 'admin' || userProfile.email.toLowerCase() === 'mfb-15@hotmail.com') {
+        const isAdmin = userProfile.role === 'admin' || 
+                        userProfile.role === 'staff' ||
+                        userProfile.email.toLowerCase() === 'mfb.15@icloud.com' || 
+                        userProfile.email.toLowerCase() === 'mfb-15@hotmail.com';
+        
+        if (isAdmin) {
           navigate('/admin');
           return;
         }
 
-        // If user already has complete profile, navigate directly to home
-        if (userProfile.fullName && userProfile.phone && userProfile.phone !== '+966 50 123 4567') {
+        // If user already has complete profile (fullName, phone, dob), navigate directly to home
+        if (
+          userProfile.fullName && userProfile.fullName.trim() && 
+          userProfile.phone && userProfile.phone.trim() && 
+          userProfile.dob && userProfile.dob.trim()
+        ) {
           navigate('/home');
           return;
         }
 
+        setEmail(userProfile.email || email.trim());
         setFullName(userProfile.fullName || '');
         setPhone(userProfile.phone || '');
+        setDob(userProfile.dob || '');
         setStep(2);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'فشل التحقق من رمز OTP');
+      setErrorMsg(err.message || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
     } finally {
-      setIsLoading(false);
+      setIsVerifyingOtp(false);
     }
   };
 
+  // Google Login Alternative
   const handleGoogleLogin = async () => {
-    setIsLoading(true);
     setErrorMsg('');
     try {
       const googleUser = await loginWithGoogle();
       if (googleUser) {
-        if (googleUser.email) setEmail(googleUser.email);
-        if (googleUser.fullName) setFullName(googleUser.fullName);
-        if (googleUser.phone) setPhone(googleUser.phone);
+        const isAdmin = googleUser.role === 'admin' || 
+                        googleUser.role === 'staff' ||
+                        googleUser.email.toLowerCase() === 'mfb.15@icloud.com' || 
+                        googleUser.email.toLowerCase() === 'mfb-15@hotmail.com';
+        if (isAdmin) {
+          navigate('/admin');
+          return;
+        }
 
-        // If user is already existing or details are filled, go directly to home page
-        if (googleUser.fullName && googleUser.phone && googleUser.phone !== '+966 50 123 4567') {
+        if (
+          googleUser.fullName && googleUser.fullName.trim() && 
+          googleUser.phone && googleUser.phone.trim() && 
+          googleUser.dob && googleUser.dob.trim()
+        ) {
           navigate('/home');
           return;
         }
+
+        setEmail(googleUser.email || '');
+        setFullName(googleUser.fullName || '');
+        setPhone(googleUser.phone || '');
+        setDob(googleUser.dob || '');
         setStep(2);
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'فشل تسجيل الدخول بواسطة Google');
-    } finally {
-      setIsLoading(false);
     }
   };
-
-
 
   const handleNextStep2 = () => {
     if (accountType === 'company' && !companyName.trim()) {
@@ -190,491 +201,338 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
       return;
     }
 
-    setIsLoading(true);
+    setIsVerifyingOtp(true);
     setErrorMsg('');
 
     try {
       await registerUser({
-        email: email || 'user@devstudio.sa',
+        email: email.trim().toLowerCase(),
         fullName: fullName.trim(),
         phone: phone.trim(),
+        dob,
         entityType: accountType,
         companyName: accountType === 'company' ? companyName.trim() : undefined,
-        dob
       });
 
-      // Navigate to main app
       navigate('/home');
     } catch (err: any) {
-      setErrorMsg(err.message || 'حدث خطأ في التسجيل');
+      setErrorMsg(err.message || 'حدث خطأ أثناء حفظ الملف الشخصي');
     } finally {
-      setIsLoading(false);
+      setIsVerifyingOtp(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] flex flex-col justify-between py-12 px-4 sm:px-6 lg:px-8 relative" dir="rtl">
+    <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative selection:bg-indigo-500 selection:text-white" dir="rtl">
       
-      {/* Background glow */}
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-indigo-600/20 rounded-full blur-[140px] pointer-events-none" />
+      {/* Ambient background glows */}
+      <div className="absolute top-10 left-1/4 w-96 h-96 bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-10 right-1/4 w-96 h-96 bg-teal-500/15 rounded-full blur-[120px] pointer-events-none" />
 
-      {/* Top Header back button */}
-      <div className="max-w-xl mx-auto w-full flex items-center justify-between z-10">
-        <button
-          onClick={() => {
-            if (step > 1) setStep(step - 1);
-            else navigate('/landing');
-          }}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold transition-all text-slate-300 hover:text-white cursor-pointer"
-        >
-          <ArrowRight className="w-4 h-4" />
-          <span>{step > 1 ? 'الخطوة السابقة' : 'العودة للتعريف'}</span>
-        </button>
-
-        <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
-          خطوة {step} من 4
-        </span>
-      </div>
-
-      {/* Main Wizard Card */}
-      <div className="max-w-xl mx-auto w-full my-auto z-10 pt-8 pb-12">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md px-4 relative z-10 space-y-6">
         
-        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl space-y-8">
-          
-          {/* Progress Indicator */}
-          <div className="flex items-center gap-2">
-            {[1, 2, 3, 4].map((s) => (
-              <div 
-                key={s} 
-                className={`h-2 flex-1 rounded-full transition-all duration-300 ${
-                  s <= step ? 'bg-gradient-to-r from-indigo-500 to-teal-400' : 'bg-slate-800'
-                }`}
-              />
-            ))}
+        {/* Header Branding */}
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-indigo-300 text-xs font-bold">
+            <Sparkles className="w-4 h-4 text-indigo-400" />
+            <span>DevStudio</span>
           </div>
+          <h2 className="text-3xl font-black text-white tracking-tight">تسجيل الدخول والتوثيق</h2>
+          <p className="text-xs text-slate-400">تابع مشاريعك البرمجية وقدّم طلباتك بكل سهولة وأمان</p>
+        </div>
 
-          {/* STEP 1: AUTH METHOD (GOOGLE / EMAIL VIA FIREBASE LINK) */}
-          {step === 1 && (
-            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-              
-              {isVerifyingEmailLink ? (
-                /* AUTO-VERIFYING LOADING STATE */
-                <div className="text-center space-y-6 py-6">
-                  <div className="w-16 h-16 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto border border-indigo-500/30">
-                    <Sparkles className="w-8 h-8 text-indigo-400 animate-spin" style={{ animationDuration: '3s' }} />
-                  </div>
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-black text-white">جاري توثيق تسجيل الدخول...</h2>
-                    <p className="text-xs text-slate-300">تم التعرف على رابط Firebase، جاري تسجيل دخولك تلقائياً دون الحاجة لإعادة التوجيه.</p>
-                  </div>
-                </div>
-              ) : emailLinkNeedsEmail ? (
-                /* MANUAL EMAIL ENTRY FOR DIFFERENT BROWSER */
-                <div className="space-y-6 text-right">
-                  <div className="w-12 h-12 bg-indigo-600/20 rounded-2xl flex items-center justify-center text-indigo-400 border border-indigo-500/30">
-                    <Mail className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-black text-white">إكمال توثيق تسجيل الدخول</h2>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      يبدو أنك فتحت رابط تسجيل الدخول من جهاز أو متصفح مختلف. يرجى إدخال نفس البريد الإلكتروني الذي أُرسل إليه الرابط لإكمال الدخول.
-                    </p>
-                  </div>
-                  <form 
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      setIsSubmittingManual(true);
-                      await completeEmailLinkWithManualEmail(manualEmail);
-                      setIsSubmittingManual(false);
-                    }} 
-                    className="space-y-4"
-                  >
-                    <div>
-                      <label className="block text-xs font-bold text-slate-300 mb-1.5">البريد الإلكتروني للرابط</label>
-                      <input
-                        type="email"
-                        required
-                        value={manualEmail}
-                        onChange={(e) => setManualEmail(e.target.value)}
-                        placeholder="name@example.com"
-                        className="w-full px-4 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-indigo-500 outline-none"
-                        dir="ltr"
-                      />
-                    </div>
-                    {emailLinkError && (
-                      <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 text-center">{emailLinkError}</p>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={isSubmittingManual}
-                      className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <span>{isSubmittingManual ? 'جاري التحقق والتسجيل...' : 'إكمال تسجيل الدخول'}</span>
-                    </button>
-                  </form>
-                </div>
-              ) : emailLinkError ? (
-                /* ERROR SCREEN FOR INVALID/EXPIRED LINK */
-                <div className="text-center space-y-6 py-4">
-                  <div className="w-16 h-16 bg-rose-500/20 rounded-full flex items-center justify-center mx-auto border border-rose-500/30">
-                    <AlertCircle className="w-8 h-8 text-rose-400" />
-                  </div>
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-black text-white">تعذر توثيق تسجيل الدخول</h2>
-                    <p className="text-xs text-rose-300 leading-relaxed max-w-md mx-auto">
-                      {emailLinkError}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={resetEmailLinkState}
-                    className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm transition-all cursor-pointer"
-                  >
-                    طلب رابط تسجيل دخول جديد
-                  </button>
-                </div>
-              ) : !otpSent ? (
-                <>
-                  <div className="space-y-2 text-right">
-                    <h1 className="text-2xl font-black text-white">تسجيل الدخول / إنشاء حساب جديد</h1>
-                    <p className="text-xs text-slate-400">اختر طريقة تسجيل الدخول المفضلة لديك للبدء</p>
-                  </div>
-
-                  {/* Method Toggles */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMethod('email');
-                        setErrorMsg('');
-                      }}
-                      className={`p-4 rounded-2xl border text-xs font-bold flex items-center justify-center gap-3 transition-all cursor-pointer ${
-                        authMethod === 'email'
-                          ? 'bg-indigo-600/30 border-indigo-500 text-white font-black'
-                          : 'bg-slate-800/60 border-slate-700/80 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Mail className="w-5 h-5 text-indigo-400 shrink-0" />
-                      <span>رمز التحقق (OTP)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMethod('google');
-                        setErrorMsg('');
-                      }}
-                      className={`p-4 rounded-2xl border text-xs font-bold flex items-center justify-center gap-3 transition-all cursor-pointer ${
-                        authMethod === 'google'
-                          ? 'bg-indigo-600/30 border-indigo-500 text-white font-black'
-                          : 'bg-slate-800/60 border-slate-700/80 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                      </svg>
-                      <span>حساب Google</span>
-                    </button>
-                  </div>
-
-                  {authMethod === 'email' ? (
-                    <div className="space-y-4 pt-2">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-300 mb-1.5">البريد الإلكتروني</label>
-                        <input
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="name@example.com"
-                          className="w-full px-4 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-indigo-500 outline-none"
-                        />
-                      </div>
-
-                      {errorMsg && (
-                        <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 text-center">{errorMsg}</p>
-                      )}
-
-                      <button
-                        type="button"
-                        disabled={isLoading}
-                        onClick={handleSendOtp}
-                        className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        <span>{isLoading ? 'جاري إرسال الرمز...' : 'إرسال رمز التحقق'}</span>
-                        <ArrowLeft className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-4 pt-2">
-                      {errorMsg && (
-                        <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 text-center">{errorMsg}</p>
-                      )}
-
-                      <button
-                        type="button"
-                        disabled={isLoading}
-                        onClick={handleGoogleLogin}
-                        className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        <span>{isLoading ? 'جاري الاتصال بـ Google...' : 'متابعة بواسطة Google'}</span>
-                        <ArrowLeft className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </>
-              ) : (
-                /* OTP CODE ENTRY SCREEN */
-                <form onSubmit={handleVerifyOtp} className="space-y-6 py-2">
-                  <div className="text-center space-y-2">
-                    <div className="w-16 h-16 bg-indigo-600/20 rounded-2xl flex items-center justify-center mx-auto border border-indigo-500/30 mb-3">
-                      <KeyRound className="w-8 h-8 text-indigo-400" />
-                    </div>
-                    <h2 className="text-2xl font-black text-white">أدخل رمز التحقق (OTP)</h2>
-                    <p className="text-xs text-slate-300 leading-relaxed max-w-md mx-auto">
-                      تم إرسال رمز تحقق مكون من 6 أرقام إلى بريدك الإلكتروني.
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 text-center">
-                    <span className="text-xs text-slate-400 block mb-1">البريد الإلكتروني:</span>
-                    <span className="font-mono font-bold text-indigo-300 text-xs dir-ltr">{email}</span>
-                  </div>
-
-                  <div className="space-y-3">
-                    <label className="block text-xs font-bold text-slate-300 text-center">أدخل الرمز المكون من 6 أرقام</label>
-                    <OtpInput
-                      value={otpCode}
-                      onChange={setOtpCode}
-                      disabled={isLoading}
-                      autoFocus={true}
-                    />
-                    <p className="text-[11px] text-slate-400 text-center">الرمز صالح لمدة 10 دقائق وبحد أقصى 5 محاولات</p>
-                  </div>
-
-                  {errorMsg && (
-                    <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 text-center">{errorMsg}</p>
-                  )}
-
-                  <div className="space-y-3 pt-2">
-                    <button
-                      type="submit"
-                      disabled={isLoading || otpCode.length !== 6}
-                      className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <span>{isLoading ? 'جاري التحقق...' : 'تحقق'}</span>
-                      <ArrowLeft className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={resendCooldown > 0 || isLoading}
-                      onClick={handleSendOtp}
-                      className={`w-full py-3.5 rounded-xl border font-bold text-xs transition-all cursor-pointer ${
-                        resendCooldown > 0
-                          ? 'bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed'
-                          : 'bg-indigo-600/20 border-indigo-500/40 text-indigo-300 hover:bg-indigo-600/30'
-                      }`}
-                    >
-                      {resendCooldown > 0 ? `إعادة إرسال الرمز بعد (${resendCooldown} ثانية)` : 'إعادة إرسال الرمز'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOtpSent(false);
-                        setOtpCode('');
-                        setErrorMsg('');
-                      }}
-                      className="w-full py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs transition-all cursor-pointer"
-                    >
-                      تغيير البريد الإلكتروني
-                    </button>
-                  </div>
-                </form>
-              )}
-
-            </motion.div>
+        {/* Card Body */}
+        <div className="bg-slate-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl p-8 space-y-6">
+          
+          {/* Error / Success Notifications */}
+          {errorMsg && (
+            <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center gap-2.5 text-xs text-rose-300">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{errorMsg}</span>
+            </div>
           )}
 
-          {/* STEP 2: ENTITY TYPE (INDIVIDUAL / COMPANY) */}
-          {step === 2 && (
-            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-              <div className="space-y-2 text-right">
-                <h2 className="text-2xl font-black text-white">تحديد صفة المستخدم</h2>
-                <p className="text-xs text-slate-400">هل تطلب الخدمة بصفتك فرد أم يمثل شركة أو مؤسسة؟</p>
+          {successMsg && (
+            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center gap-2.5 text-xs text-emerald-300">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {/* STEP 1: ENTER EMAIL */}
+          {step === 1 && (
+            <form onSubmit={handleSendOtp} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">البريد الإلكتروني</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5" />
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    dir="ltr"
+                    className="w-full text-left pl-4 pr-10 py-3 bg-slate-950/60 border border-slate-700/80 rounded-2xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <button
+                type="submit"
+                disabled={isSendingOtp}
+                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-teal-500 hover:from-indigo-500 hover:to-teal-400 text-white font-extrabold text-xs rounded-2xl shadow-lg shadow-indigo-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isSendingOtp ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جاري إرسال رمز التحقق...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>إرسال رمز التحقق (OTP)</span>
+                    <ArrowLeft className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              {/* Google Alternative */}
+              <div className="pt-3 border-t border-slate-800 text-center">
                 <button
                   type="button"
-                  onClick={() => {
-                    setAccountType('individual');
-                    setErrorMsg('');
-                  }}
-                  className={`p-6 rounded-2xl border text-right space-y-3 transition-all cursor-pointer ${
+                  onClick={handleGoogleLogin}
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                  </svg>
+                  <span>الدخول بحساب Google</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* STEP 'otp': ENTER OTP CODE */}
+          {step === 'otp' && (
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-300">أدخل رمز التحقق (6 أرقام)</label>
+                  <span className="text-[11px] text-indigo-400 font-mono">{email}</span>
+                </div>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5" />
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    value={otp}
+                    onChange={(e) => setOtp(convertArabicToEnglishDigits(e.target.value).replace(/[^0-9]/g, ''))}
+                    placeholder="123456"
+                    autoFocus
+                    dir="ltr"
+                    className="w-full text-center tracking-[10px] pl-4 pr-10 py-3 bg-slate-950/60 border border-slate-700/80 rounded-2xl text-lg font-mono text-indigo-300 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isVerifyingOtp || otp.length !== 6}
+                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-teal-500 hover:from-indigo-500 hover:to-teal-400 text-white font-extrabold text-xs rounded-2xl shadow-lg shadow-indigo-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isVerifyingOtp ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جاري التحقق والدخول...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>تأكيد الرمز والدخول</span>
+                    <CheckCircle2 className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center justify-between text-xs text-slate-400 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="hover:text-white underline cursor-pointer"
+                >
+                  تغيير البريد
+                </button>
+
+                {cooldown > 0 ? (
+                  <span>إعادة الإرسال بعد ({cooldown}ث)</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSendOtp()}
+                    className="text-indigo-400 hover:text-indigo-300 font-bold cursor-pointer"
+                  >
+                    إعادة إرسال الرمز
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+
+          {/* STEP 2: ENTITY TYPE (فرد أو شركة بدون وصف) */}
+          {step === 2 && (
+            <div className="space-y-4">
+              <label className="block text-xs font-bold text-slate-300">اختر نوع الحساب:</label>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAccountType('individual')}
+                  className={`p-4 rounded-2xl border text-center transition-all cursor-pointer font-bold text-sm ${
                     accountType === 'individual'
-                      ? 'bg-indigo-600/30 border-indigo-500 text-white font-black shadow-lg shadow-indigo-600/20'
-                      : 'bg-slate-800/60 border-slate-700/80 text-slate-400 hover:text-white'
+                      ? 'bg-indigo-600/30 border-indigo-500 text-white shadow-lg'
+                      : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
                   }`}
                 >
-                  <User className="w-7 h-7 text-indigo-400" />
-                  <div>
-                    <h3 className="font-bold text-sm text-white">فرد / مستقل</h3>
-                    <p className="text-[11px] text-slate-400 mt-0.5">للأفراد وأصحاب الأفكار الناشئة</p>
-                  </div>
+                  <User className="w-6 h-6 mx-auto mb-2 text-indigo-400" />
+                  <span>فرد</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setAccountType('company');
-                    setErrorMsg('');
-                  }}
-                  className={`p-6 rounded-2xl border text-right space-y-3 transition-all cursor-pointer ${
+                  onClick={() => setAccountType('company')}
+                  className={`p-4 rounded-2xl border text-center transition-all cursor-pointer font-bold text-sm ${
                     accountType === 'company'
-                      ? 'bg-indigo-600/30 border-indigo-500 text-white font-black shadow-lg shadow-indigo-600/20'
-                      : 'bg-slate-800/60 border-slate-700/80 text-slate-400 hover:text-white'
+                      ? 'bg-indigo-600/30 border-indigo-500 text-white shadow-lg'
+                      : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
                   }`}
                 >
-                  <Building2 className="w-7 h-7 text-indigo-400" />
-                  <div>
-                    <h3 className="font-bold text-sm text-white">شركة / مؤسسة</h3>
-                    <p className="text-[11px] text-slate-400 mt-0.5">للجهات التجارية والشركات</p>
-                  </div>
+                  <Building2 className="w-6 h-6 mx-auto mb-2 text-teal-400" />
+                  <span>شركة</span>
                 </button>
               </div>
 
               {accountType === 'company' && (
-                <div className="space-y-2 pt-2">
+                <div className="space-y-1 pt-2">
                   <label className="block text-xs font-bold text-slate-300">اسم الشركة أو المؤسسة</label>
                   <input
                     type="text"
+                    required
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
-                    placeholder="مثال: شركة الرؤية المستقبلية"
-                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold text-xs focus:border-indigo-500 outline-none"
+                    placeholder="مثال: شركة الحلول المتقدمة"
+                    className="w-full px-4 py-3 bg-slate-950/60 border border-slate-700 rounded-2xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
-              )}
-
-              {errorMsg && (
-                <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">{errorMsg}</p>
               )}
 
               <button
                 type="button"
                 onClick={handleNextStep2}
-                className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-4"
               >
-                <span>متابعة الخطوة التالية</span>
+                <span>التالي</span>
                 <ArrowLeft className="w-4 h-4" />
               </button>
-            </motion.div>
+            </div>
           )}
 
-          {/* STEP 3: DATE OF BIRTH */}
+          {/* STEP 3: DOB */}
           {step === 3 && (
-            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-              <div className="space-y-2 text-right">
-                <h2 className="text-2xl font-black text-white">تاريخ الميلاد</h2>
-                <p className="text-xs text-slate-400">يرجى تحديد تاريخ الميلاد لاكتمال بيانات ملفك</p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-300">تاريخ الميلاد (اليوم / الشهر / السنة)</label>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">تاريخ الميلاد</label>
                 <div className="relative">
-                  <Calendar className="w-5 h-5 text-indigo-400 absolute right-3.5 top-3.5" />
+                  <Calendar className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5" />
                   <input
                     type="date"
+                    required
                     value={dob}
                     onChange={(e) => setDob(e.target.value)}
-                    className="w-full pl-4 pr-11 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold text-sm focus:border-indigo-500 outline-none"
+                    className="w-full px-4 pr-10 py-3 bg-slate-950/60 border border-slate-700 rounded-2xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               </div>
 
-              {errorMsg && (
-                <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">{errorMsg}</p>
-              )}
-
-              <button
-                type="button"
-                onClick={handleNextStep3}
-                className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>متابعة الخطوة الأخيرة</span>
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-            </motion.div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  className="px-4 py-3.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-2xl text-xs font-bold cursor-pointer"
+                >
+                  السابق
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextStep3}
+                  className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>التالي</span>
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
           )}
 
-          {/* STEP 4: PHONE & FULL NAME + "تبقى خطوة واحدة فقط" BANNER */}
+          {/* STEP 4: FULL NAME & PHONE (Empty by default) */}
           {step === 4 && (
-            <form onSubmit={handleFinalSubmit} className="space-y-6">
-              
-              {/* Mandatory Requirement Banner */}
-              <div className="p-4 bg-indigo-950/80 border border-indigo-500/40 rounded-2xl text-indigo-200 text-center space-y-1">
-                <div className="flex items-center justify-center gap-2 font-black text-base text-indigo-300">
-                  <Sparkles className="w-5 h-5 text-indigo-400" />
-                  <span>تبقى خطوة واحدة فقط</span>
-                </div>
-                <p className="text-xs opacity-90">ادخل اسمك الكامل ورقم الجوال المعتمد للتواصل</p>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1.5">الاسم الكامل</label>
-                  <div className="relative">
-                    <User className="w-5 h-5 text-slate-400 absolute right-3.5 top-3.5" />
-                    <input
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="مثال: عبدالله محمد السلمان"
-                      className="w-full pl-4 pr-11 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold text-sm focus:border-indigo-500 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1.5">رقم الجوال</label>
-                  <div className="relative">
-                    <Phone className="w-5 h-5 text-slate-400 absolute right-3.5 top-3.5" />
-                    <input
-                      type="tel"
-                      required
-                      value={phone}
-                      onChange={(e) => setPhone(convertArabicToEnglishDigits(e.target.value))}
-                      placeholder="0501234567"
-                      dir="ltr"
-                      className="w-full pl-4 pr-11 py-3.5 text-right bg-slate-800 border border-slate-700 rounded-xl text-white font-bold text-sm focus:border-indigo-500 outline-none"
-                    />
-                  </div>
+            <form onSubmit={handleFinalSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">الاسم الكامل</label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5" />
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="اكتب اسمك الكامل هنا..."
+                    className="w-full pl-4 pr-10 py-3 bg-slate-950/60 border border-slate-700 rounded-2xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
                 </div>
               </div>
 
-              {errorMsg && (
-                <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">{errorMsg}</p>
-              )}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">رقم الجوال</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5" />
+                  <input
+                    type="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="0500000000"
+                    dir="ltr"
+                    className="w-full text-right pl-4 pr-10 py-3 bg-slate-950/60 border border-slate-700 rounded-2xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
 
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-4 rounded-xl bg-gradient-to-r from-indigo-600 to-teal-500 hover:from-indigo-500 hover:to-teal-400 text-white font-extrabold text-base shadow-xl shadow-indigo-600/40 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <CheckCircle2 className="w-5 h-5" />
-                <span>{isLoading ? 'جاري الاتصال وحفظ البيانات...' : 'بدأ الاستخدام'}</span>
-              </button>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStep(3)}
+                  className="px-4 py-3.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-2xl text-xs font-bold cursor-pointer"
+                >
+                  السابق
+                </button>
+                <button
+                  type="submit"
+                  disabled={isVerifyingOtp}
+                  className="flex-1 py-3.5 bg-gradient-to-r from-indigo-600 to-teal-500 hover:from-indigo-500 hover:to-teal-400 text-white font-extrabold text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <span>إتمام الدخول</span>
+                  <CheckCircle2 className="w-4 h-4" />
+                </button>
+              </div>
             </form>
           )}
 
         </div>
-      </div>
 
+      </div>
     </div>
   );
 };

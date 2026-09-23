@@ -133,7 +133,7 @@ export const QuoteRequestModal: React.FC<QuoteRequestModalProps> = ({
           
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-full border border-indigo-100">
-              طلب عرض سعر برمجيات
+              تقديم طلب برمجة
             </span>
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-indigo-200">
               <Sparkles className="w-4 h-4" />
@@ -147,9 +147,9 @@ export const QuoteRequestModal: React.FC<QuoteRequestModalProps> = ({
               <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
                 <CheckCircle2 className="w-10 h-10" />
               </div>
-              <h3 className="text-2xl font-black text-slate-900">تم تأكيد طلب عرض السعر بنجاح!</h3>
+              <h3 className="text-2xl font-black text-slate-900">تم تأكيد طلب البرمجة بنجاح!</h3>
               <p className="text-slate-600 max-w-md mx-auto text-sm">
-                سيتواصل معك أحد الموظفين المختصين عبر الواتساب أو الاتصال الهاتفي لدراسة التفاصيل والاتفاق على السعر النهائي.
+                سيتواصل معك أحد الموظفين المختصين عبر الواتساب أو الاتصال الهاتفي لدراسة التفاصيل والبدء بالمشروع.
               </p>
             </motion.div>
           ) : (
@@ -344,7 +344,7 @@ export const QuoteRequestModal: React.FC<QuoteRequestModalProps> = ({
                       disabled={isLoading}
                       className="px-8 py-3.5 bg-gradient-to-r from-indigo-600 to-teal-600 hover:from-indigo-700 hover:to-teal-700 text-white font-extrabold rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center gap-2"
                     >
-                      <span>تأكيد عرض السعر</span>
+                      <span>تأكيد طلب البرمجة</span>
                       <Send className="w-4 h-4 rotate-180" />
                     </button>
                   </div>
