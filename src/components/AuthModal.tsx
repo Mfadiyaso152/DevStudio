@@ -24,13 +24,15 @@ export const AuthModal: React.FC = () => {
     closeAuthModal, 
     registerUser, 
     loginWithGoogle, 
-    sendFirebaseEmailLink
+    sendOtp,
+    verifyOtp
   } = useAuth();
 
   const [step, setStep] = useState<number>(1);
   const [authMethod, setAuthMethod] = useState<'google' | 'email'>('email');
   const [email, setEmail] = useState<string>('');
-  const [linkSent, setLinkSent] = useState<boolean>(false);
+  const [otpCode, setOtpCode] = useState<string>('');
+  const [otpSent, setOtpSent] = useState<boolean>(false);
   const [resendCooldown, setResendCooldown] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -46,7 +48,8 @@ export const AuthModal: React.FC = () => {
 
   const resetState = () => {
     setStep(1);
-    setLinkSent(false);
+    setOtpSent(false);
+    setOtpCode('');
     setErrorMessage('');
     setIsLoading(false);
   };
@@ -56,7 +59,7 @@ export const AuthModal: React.FC = () => {
     closeAuthModal();
   };
 
-  const handleSendLink = async () => {
+  const handleSendOtp = async () => {
     if (!email || !email.includes('@')) {
       setErrorMessage('يرجى إدخال بريد إلكتروني صحيح');
       return;
@@ -64,9 +67,9 @@ export const AuthModal: React.FC = () => {
     setErrorMessage('');
     setIsLoading(true);
     try {
-      await sendFirebaseEmailLink(email.trim());
-      setLinkSent(true);
-      setResendCooldown(30);
+      const res = await sendOtp(email.trim());
+      setOtpSent(true);
+      setResendCooldown(res.cooldownSeconds || 60);
       const timer = setInterval(() => {
         setResendCooldown((prev) => {
           if (prev <= 1) {
@@ -77,7 +80,33 @@ export const AuthModal: React.FC = () => {
         });
       }, 1000);
     } catch (err: any) {
-      setErrorMessage(err.message || 'فشل إرسال رابط تسجيل الدخول عبر Firebase');
+      setErrorMessage(err.message || 'فشل إرسال رمز التحقق');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode || otpCode.trim().length !== 6) {
+      setErrorMessage('يرجى إدخال رمز التحقق المكون من 6 أرقام');
+      return;
+    }
+    setErrorMessage('');
+    setIsLoading(true);
+    try {
+      const profile = await verifyOtp(email.trim(), otpCode.trim());
+      if (profile) {
+        if (profile.fullName && profile.phone && profile.phone !== '+966 50 123 4567') {
+          handleClose();
+          return;
+        }
+        setFullName(profile.fullName || '');
+        setPhone(profile.phone || '');
+        setStep(2);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل التحقق من رمز OTP');
     } finally {
       setIsLoading(false);
     }
@@ -185,7 +214,7 @@ export const AuthModal: React.FC = () => {
                 exit={{ opacity: 0, x: -20 }}
                 className="space-y-6"
               >
-                {!linkSent ? (
+                {!otpSent ? (
                   <>
                     <div className="text-center space-y-2">
                       <h3 className="text-2xl font-bold text-slate-900">تسجيل الدخول / إنشاء حساب</h3>
@@ -209,7 +238,7 @@ export const AuthModal: React.FC = () => {
 
                     <div className="relative flex items-center justify-center">
                       <div className="border-t border-slate-200 w-full" />
-                      <span className="bg-white px-3 text-xs text-slate-400 font-medium uppercase absolute">أو بالبريد الإلكتروني</span>
+                      <span className="bg-white px-3 text-xs text-slate-400 font-medium uppercase absolute">أو برمز التحقق (OTP)</span>
                     </div>
 
                     {/* Email Form */}
@@ -230,60 +259,85 @@ export const AuthModal: React.FC = () => {
                       </div>
 
                       <button
-                        onClick={handleSendLink}
+                        onClick={handleSendOtp}
                         disabled={isLoading}
                         className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <span>{isLoading ? 'جاري إرسال الرابط...' : 'إرسال رابط الدخول'}</span>
+                        <span>{isLoading ? 'جاري إرسال الرمز...' : 'إرسال رمز التحقق'}</span>
                         <ArrowRight className="w-4 h-4 rotate-180" />
                       </button>
                     </div>
                   </>
                 ) : (
-                  /* CONFIRMATION SCREEN */
-                  <div className="text-center space-y-6 py-2">
-                    <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto border border-indigo-100 shadow-sm">
-                      <Mail className="w-8 h-8" />
-                    </div>
+                  /* OTP CODE SCREEN */
+                  <form onSubmit={handleVerifyOtp} className="space-y-5 py-2">
+                    <div className="text-center space-y-2">
+                      <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto border border-indigo-100 shadow-sm">
+                        <KeyRound className="w-7 h-7" />
+                      </div>
 
-                    <div className="space-y-2">
-                      <h3 className="text-2xl font-bold text-slate-900">تحقق من بريدك الإلكتروني</h3>
-                      <p className="text-sm text-slate-600 leading-relaxed max-w-sm mx-auto">
-                        أرسلنا رابط تسجيل الدخول إلى بريدك الإلكتروني. افتح الرسالة واضغط على رابط تسجيل الدخول للمتابعة.
+                      <h3 className="text-2xl font-bold text-slate-900">أدخل رمز التحقق (OTP)</h3>
+                      <p className="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
+                        تم إرسال رمز تحقق مكون من 6 أرقام إلى بريدك الإلكتروني.
                       </p>
                     </div>
 
-                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-center">
-                      <span className="text-xs text-slate-500 block mb-1">تم الإرسال إلى:</span>
-                      <span className="font-mono font-bold text-indigo-700 text-sm dir-ltr">{email}</span>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+                      <span className="text-xs text-slate-500 block mb-0.5">البريد الإلكتروني:</span>
+                      <span className="font-mono font-bold text-indigo-700 text-xs dir-ltr">{email}</span>
                     </div>
 
-                    <div className="space-y-3 pt-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1 text-right">رمز التحقق (6 أرقام)</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={6}
+                        autoFocus
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                        placeholder="------"
+                        className="w-full text-center tracking-[0.4em] text-2xl font-mono py-3.5 bg-white border-2 border-slate-300 focus:border-indigo-600 rounded-xl text-slate-900 font-bold outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                      <button
+                        type="submit"
+                        disabled={isLoading || otpCode.length !== 6}
+                        className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <span>{isLoading ? 'جاري التحقق...' : 'تأكيد ودخول'}</span>
+                        <CheckCircle2 className="w-5 h-5" />
+                      </button>
+
                       <button
                         type="button"
                         disabled={resendCooldown > 0 || isLoading}
-                        onClick={handleSendLink}
-                        className={`w-full py-3 rounded-xl border font-bold text-xs transition-all cursor-pointer ${
+                        onClick={handleSendOtp}
+                        className={`w-full py-2.5 rounded-xl border font-bold text-xs transition-all cursor-pointer ${
                           resendCooldown > 0
                             ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
                             : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
                         }`}
                       >
-                        {resendCooldown > 0 ? `إعادة إرسال الرابط بعد (${resendCooldown} ثانية)` : 'إعادة إرسال الرابط'}
+                        {resendCooldown > 0 ? `إعادة إرسال الرمز بعد (${resendCooldown} ثانية)` : 'إعادة إرسال الرمز'}
                       </button>
 
                       <button
                         type="button"
                         onClick={() => {
-                          setLinkSent(false);
+                          setOtpSent(false);
+                          setOtpCode('');
                           setErrorMessage('');
                         }}
-                        className="w-full py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer"
+                        className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer"
                       >
                         تغيير البريد الإلكتروني
                       </button>
                     </div>
-                  </div>
+                  </form>
                 )}
               </motion.div>
             )}

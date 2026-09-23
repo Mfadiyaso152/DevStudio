@@ -7,6 +7,7 @@ import {
   sendSignInLinkToEmail, 
   isSignInWithEmailLink, 
   signInWithEmailLink, 
+  signInWithCustomToken,
   signInWithPopup, 
   onAuthStateChanged, 
   signOut 
@@ -24,6 +25,8 @@ interface AuthContextType {
   closeAuthModal: () => void;
   registerUser: (data: Omit<UserProfile, 'uid' | 'createdAt' | 'updatedAt' | 'role'>) => Promise<UserProfile>;
   loginWithGoogle: () => Promise<UserProfile>;
+  sendOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
+  verifyOtp: (email: string, otp: string) => Promise<UserProfile>;
   sendFirebaseEmailLink: (email: string) => Promise<void>;
   completeEmailLinkWithManualEmail: (email: string) => Promise<void>;
   completeFirebaseEmailSignIn: (email: string, code?: string) => Promise<UserProfile>;
@@ -261,6 +264,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Send 6-digit OTP via Backend API
+  const sendOtp = async (email: string): Promise<{ success: boolean; message: string; cooldownSeconds: number }> => {
+    if (!email || !email.includes('@')) {
+      throw new Error('البريد الإلكتروني غير صحيح');
+    }
+
+    try {
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'فشل إرسال رمز التحقق');
+      }
+
+      return {
+        success: true,
+        message: data.message || 'تم إرسال رمز التحقق بنجاح',
+        cooldownSeconds: data.cooldownSeconds || 60
+      };
+    } catch (err: any) {
+      console.error('sendOtp error:', err);
+      throw new Error(err.message || 'فشل الاتصال بخادم إرسال الرمز');
+    }
+  };
+
+  // Verify 6-digit OTP via Backend API and Sign In with Firebase Custom Token
+  const verifyOtp = async (email: string, otp: string): Promise<UserProfile> => {
+    if (!email || !email.includes('@')) {
+      throw new Error('البريد الإلكتروني غير صحيح');
+    }
+    if (!otp || otp.trim().length !== 6) {
+      throw new Error('يرجى إدخال رمز التحقق المكون من 6 أرقام');
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanOtp = otp.trim();
+
+    try {
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, otp: cleanOtp }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
+      }
+
+      const uid = data.uid || ('usr_' + Date.now());
+      const role: UserRole = cleanEmail === 'mfb-15@hotmail.com' ? 'admin' : (data.role || 'client');
+
+      // If customToken returned from Firebase Admin, sign in via Firebase Auth
+      if (data.customToken) {
+        try {
+          await signInWithCustomToken(auth, data.customToken);
+        } catch (tokenErr) {
+          console.warn('signInWithCustomToken notice:', tokenErr);
+        }
+      }
+
+      // Check existing profile in Firestore / local
+      let targetUser = await getUserProfile(uid);
+      if (!targetUser) {
+        targetUser = {
+          uid,
+          email: cleanEmail,
+          fullName: cleanEmail.split('@')[0],
+          phone: '+966 50 123 4567',
+          dob: '2010-01-01',
+          entityType: 'individual',
+          role,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await saveUserProfile(targetUser);
+      } else if (cleanEmail === 'mfb-15@hotmail.com' && targetUser.role !== 'admin') {
+        targetUser = { ...targetUser, role: 'admin' };
+        await saveUserProfile(targetUser);
+      }
+
+      setUser(targetUser);
+      closeAuthModal();
+      return targetUser;
+    } catch (err: any) {
+      console.error('verifyOtp error:', err);
+      throw new Error(err.message || 'فشل التحقق من رمز OTP');
+    }
+  };
+
   const sendFirebaseEmailLink = async (email: string): Promise<void> => {
     if (!email || !email.includes('@')) {
       throw new Error('البريد الإلكتروني غير صحيح');
@@ -400,6 +497,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         closeAuthModal,
         registerUser,
         loginWithGoogle,
+        sendOtp,
+        verifyOtp,
         sendFirebaseEmailLink,
         completeEmailLinkWithManualEmail,
         completeFirebaseEmailSignIn,

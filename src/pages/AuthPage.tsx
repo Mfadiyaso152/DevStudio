@@ -24,6 +24,8 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   const { 
     registerUser, 
     loginWithGoogle, 
+    sendOtp,
+    verifyOtp,
     sendFirebaseEmailLink,
     isVerifyingEmailLink,
     emailLinkNeedsEmail,
@@ -38,10 +40,12 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   // Auth Choice
   const [authMethod, setAuthMethod] = useState<'google' | 'email'>('email');
   const [email, setEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const [manualEmail, setManualEmail] = useState('');
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
-  const [linkSent, setLinkSent] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
 
   // Step 2: Entity Type
   const [accountType, setAccountType] = useState<AccountType>('individual');
@@ -57,15 +61,15 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Handle Firebase Email Link Send
-  const handleSendEmailLink = async () => {
+  // Handle Send 6-digit OTP via Resend Backend
+  const handleSendOtp = async () => {
     if (!email.trim() || !email.includes('@')) {
       setErrorMsg('البريد الإلكتروني غير صحيح');
       return;
     }
 
     if (resendCooldown > 0) {
-      setErrorMsg(`يرجى الانتظار ${resendCooldown} ثانية قبل إعادة الإرسال`);
+      setErrorMsg(`يرجى الانتظار ${resendCooldown} ثانية قبل إعادة إرسال الرمز`);
       return;
     }
 
@@ -73,11 +77,11 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
     setErrorMsg('');
 
     try {
-      await sendFirebaseEmailLink(email.trim());
-      setLinkSent(true);
+      const res = await sendOtp(email.trim());
+      setOtpSent(true);
 
-      // Start 30s resend cooldown
-      setResendCooldown(30);
+      // Start 60s resend cooldown
+      setResendCooldown(res.cooldownSeconds || 60);
       const timer = setInterval(() => {
         setResendCooldown((prev) => {
           if (prev <= 1) {
@@ -88,7 +92,43 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
         });
       }, 1000);
     } catch (err: any) {
-      setErrorMsg(err.message || 'فشل إرسال رابط تسجيل الدخول، يرجى إعادة المحاولة');
+      setErrorMsg(err.message || 'فشل إرسال رمز التحقق، يرجى إعادة المحاولة');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle Verify 6-digit OTP
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode.trim() || otpCode.trim().length !== 6) {
+      setErrorMsg('يرجى إدخال رمز التحقق المكون من 6 أرقام');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMsg('');
+
+    try {
+      const userProfile = await verifyOtp(email.trim(), otpCode.trim());
+      if (userProfile) {
+        if (userProfile.role === 'admin' || userProfile.email.toLowerCase() === 'mfb-15@hotmail.com') {
+          navigate('/admin');
+          return;
+        }
+
+        // If user already has complete profile, navigate directly to home
+        if (userProfile.fullName && userProfile.phone && userProfile.phone !== '+966 50 123 4567') {
+          navigate('/home');
+          return;
+        }
+
+        setFullName(userProfile.fullName || '');
+        setPhone(userProfile.phone || '');
+        setStep(2);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل التحقق من رمز OTP');
     } finally {
       setIsLoading(false);
     }
@@ -292,11 +332,11 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                     طلب رابط تسجيل دخول جديد
                   </button>
                 </div>
-              ) : !linkSent ? (
+              ) : !otpSent ? (
                 <>
                   <div className="space-y-2 text-right">
                     <h1 className="text-2xl font-black text-white">تسجيل الدخول / إنشاء حساب جديد</h1>
-                    <p className="text-xs text-slate-400">اختر طريقة تسجيل الدخول المفضل لديك للبدء</p>
+                    <p className="text-xs text-slate-400">اختر طريقة تسجيل الدخول المفضلة لديك للبدء</p>
                   </div>
 
                   {/* Method Toggles */}
@@ -314,7 +354,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                       }`}
                     >
                       <Mail className="w-5 h-5 text-indigo-400 shrink-0" />
-                      <span>البريد الإلكتروني</span>
+                      <span>رمز التحقق (OTP)</span>
                     </button>
 
                     <button
@@ -359,10 +399,10 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                       <button
                         type="button"
                         disabled={isLoading}
-                        onClick={handleSendEmailLink}
+                        onClick={handleSendOtp}
                         className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <span>{isLoading ? 'جاري إرسال الرابط...' : 'إرسال رابط الدخول'}</span>
+                        <span>{isLoading ? 'جاري إرسال الرمز...' : 'إرسال رمز التحقق'}</span>
                         <ArrowLeft className="w-4 h-4" />
                       </button>
                     </div>
@@ -385,22 +425,40 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                   )}
                 </>
               ) : (
-                /* CONFIRMATION SCREEN */
-                <div className="text-center space-y-6 py-4">
-                  <div className="w-16 h-16 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto border border-indigo-500/30">
-                    <Mail className="w-8 h-8 text-indigo-400" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-black text-white">تحقق من بريدك الإلكتروني</h2>
+                /* OTP CODE ENTRY SCREEN */
+                <form onSubmit={handleVerifyOtp} className="space-y-6 py-2">
+                  <div className="text-center space-y-2">
+                    <div className="w-16 h-16 bg-indigo-600/20 rounded-2xl flex items-center justify-center mx-auto border border-indigo-500/30 mb-3">
+                      <KeyRound className="w-8 h-8 text-indigo-400" />
+                    </div>
+                    <h2 className="text-2xl font-black text-white">أدخل رمز التحقق (OTP)</h2>
                     <p className="text-xs text-slate-300 leading-relaxed max-w-md mx-auto">
-                      أرسلنا رابط تسجيل الدخول إلى بريدك الإلكتروني. افتح الرسالة واضغط على رابط تسجيل الدخول للمتابعة.
+                      تم إرسال رمز تحقق مكون من 6 أرقام إلى بريدك الإلكتروني.
                     </p>
                   </div>
 
-                  <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 text-center">
-                    <span className="text-xs text-slate-400 block mb-1">تم الإرسال إلى:</span>
-                    <span className="font-mono font-bold text-indigo-300 text-sm dir-ltr">{email}</span>
+                  <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 text-center">
+                    <span className="text-xs text-slate-400 block mb-1">البريد الإلكتروني:</span>
+                    <span className="font-mono font-bold text-indigo-300 text-xs dir-ltr">{email}</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-300 text-right">رمز التحقق المكون من 6 أرقام</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      autoFocus
+                      value={otpCode}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9]/g, '');
+                        setOtpCode(val);
+                      }}
+                      placeholder="------"
+                      className="w-full text-center tracking-[0.5em] text-2xl font-mono py-4 bg-slate-800 border-2 border-slate-700 focus:border-indigo-500 rounded-2xl text-white font-bold outline-none"
+                    />
+                    <p className="text-[11px] text-slate-400 text-center">الرمز صالح لمدة 10 دقائق وبحد أقصى 5 محاولات</p>
                   </div>
 
                   {errorMsg && (
@@ -409,22 +467,32 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
 
                   <div className="space-y-3 pt-2">
                     <button
+                      type="submit"
+                      disabled={isLoading || otpCode.length !== 6}
+                      className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span>{isLoading ? 'جاري التحقق...' : 'تأكيد وتسجيل الدخول'}</span>
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+
+                    <button
                       type="button"
                       disabled={resendCooldown > 0 || isLoading}
-                      onClick={handleSendEmailLink}
+                      onClick={handleSendOtp}
                       className={`w-full py-3.5 rounded-xl border font-bold text-xs transition-all cursor-pointer ${
                         resendCooldown > 0
                           ? 'bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed'
                           : 'bg-indigo-600/20 border-indigo-500/40 text-indigo-300 hover:bg-indigo-600/30'
                       }`}
                     >
-                      {resendCooldown > 0 ? `إعادة إرسال الرابط بعد (${resendCooldown} ثانية)` : 'إعادة إرسال الرابط'}
+                      {resendCooldown > 0 ? `إعادة إرسال الرمز بعد (${resendCooldown} ثانية)` : 'إعادة إرسال الرمز'}
                     </button>
 
                     <button
                       type="button"
                       onClick={() => {
-                        setLinkSent(false);
+                        setOtpSent(false);
+                        setOtpCode('');
                         setErrorMsg('');
                       }}
                       className="w-full py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs transition-all cursor-pointer"
@@ -432,7 +500,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
                       تغيير البريد الإلكتروني
                     </button>
                   </div>
-                </div>
+                </form>
               )}
 
             </motion.div>

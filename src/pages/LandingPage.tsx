@@ -218,9 +218,6 @@ export const LandingPage: React.FC<{ navigate: (path: string) => void }> = ({ na
       <section className="py-20 px-4 text-center bg-gradient-to-b from-slate-950 to-indigo-950 relative overflow-hidden">
         <div className="max-w-3xl mx-auto space-y-6 relative z-10">
           <h2 className="text-3xl sm:text-4xl font-black text-white">جاهز لبدء مشروعك القادم؟</h2>
-          <p className="text-slate-300 text-sm max-w-xl mx-auto">
-            اضغط على ابدأ الآن لتسجيل الدخول في خطوتين بسلسة وسهلة والتواصل المباشر معنا للحصول على عرض سعر دقيق.
-          </p>
           <button
             onClick={() => navigate('/auth')}
             className="px-10 py-5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-lg shadow-2xl shadow-indigo-600/50 transition-all inline-flex items-center gap-3 cursor-pointer"

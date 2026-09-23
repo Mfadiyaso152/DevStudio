@@ -42,16 +42,18 @@ import {
 import { useAuth } from '../context/AuthContext';
 
 export const AdminPage: React.FC = () => {
-  const { user, sendFirebaseEmailLink } = useAuth();
+  const { user, sendOtp, verifyOtp } = useAuth();
   
   // Primary Admin Email Required
   const PRIMARY_ADMIN_EMAIL = 'mfb-15@hotmail.com';
 
   // Admin Verification Gate State
-  const [inputEmail, setInputEmail] = useState<string>('');
-  const [emailLinkSent, setEmailLinkSent] = useState<boolean>(false);
+  const [inputEmail, setInputEmail] = useState<string>('mfb-15@hotmail.com');
+  const [otpSent, setOtpSent] = useState<boolean>(false);
+  const [otpCode, setOtpCode] = useState<string>('');
   const [gateError, setGateError] = useState<string>('');
   const [isSendingLink, setIsSendingLink] = useState<boolean>(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false);
 
   // Tab State: 1 = stats, 2 = quotes, 3 = payments, 4 = permissions (password protected)
   const [activeTab, setActiveTab] = useState<'stats' | 'quotes' | 'payments' | 'users'>('stats');
@@ -85,8 +87,8 @@ export const AdminPage: React.FC = () => {
     };
   }, []);
 
-  // Handle sending email link to admin
-  const handleSendAdminVerification = async (e: React.FormEvent) => {
+  // Handle sending OTP to admin
+  const handleSendAdminOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = inputEmail.trim().toLowerCase();
 
@@ -99,12 +101,32 @@ export const AdminPage: React.FC = () => {
     setGateError('');
 
     try {
-      await sendFirebaseEmailLink(PRIMARY_ADMIN_EMAIL);
-      setEmailLinkSent(true);
+      await sendOtp(PRIMARY_ADMIN_EMAIL);
+      setOtpSent(true);
     } catch (err: any) {
-      setGateError(err.message || 'فشل إرسال رابط التوثيق للبريد الإلكتروني');
+      setGateError(err.message || 'فشل إرسال رمز التحقق للبريد الإلكتروني');
     } finally {
       setIsSendingLink(false);
+    }
+  };
+
+  // Handle verifying Admin OTP
+  const handleVerifyAdminOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode || otpCode.trim().length !== 6) {
+      setGateError('يرجى إدخال رمز التحقق المكون من 6 أرقام');
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setGateError('');
+
+    try {
+      await verifyOtp(PRIMARY_ADMIN_EMAIL, otpCode.trim());
+    } catch (err: any) {
+      setGateError(err.message || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
+    } finally {
+      setIsVerifyingOtp(false);
     }
   };
 
@@ -171,13 +193,13 @@ export const AdminPage: React.FC = () => {
               <ShieldCheck className="w-8 h-8" />
             </div>
             <h1 className="text-2xl font-black text-white">لوحة تحكم الإدارة والمشرفين</h1>
-            {!emailLinkSent && (
-              <p className="text-xs text-slate-400">يرجى إدخال البريد الإلكتروني المصرح له بالدخول لاستلام رابط التوثيق</p>
-            )}
+            <p className="text-xs text-slate-400">
+              {otpSent ? 'أدخل رمز التحقق (OTP) المكون من 6 أرقام للدخول' : 'يرجى تأكيد البريد الإلكتروني المصرح له بالدخول'}
+            </p>
           </div>
 
-          {!emailLinkSent ? (
-            <form onSubmit={handleSendAdminVerification} className="space-y-4">
+          {!otpSent ? (
+            <form onSubmit={handleSendAdminOtp} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">البريد الإلكتروني للإدارة</label>
                 <div className="relative">
@@ -187,7 +209,7 @@ export const AdminPage: React.FC = () => {
                     required
                     value={inputEmail}
                     onChange={(e) => setInputEmail(e.target.value)}
-                    placeholder="admin@domain.com"
+                    placeholder="mfb-15@hotmail.com"
                     className="w-full pl-4 pr-11 py-3.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-indigo-500 outline-none"
                     dir="ltr"
                   />
@@ -207,19 +229,69 @@ export const AdminPage: React.FC = () => {
                 className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Send className="w-4 h-4" />
-                <span>{isSendingLink ? 'جاري إرسال رابط التوثيق...' : 'إرسال رابط التوثيق إلى البريد'}</span>
+                <span>{isSendingLink ? 'جاري إرسال رمز التحقق...' : 'إرسال رمز التحقق (OTP)'}</span>
               </button>
             </form>
           ) : (
-            <div className="p-6 bg-emerald-950/60 border border-emerald-500/40 rounded-2xl text-center space-y-4">
-              <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-6 h-6" />
+            <form onSubmit={handleVerifyAdminOtp} className="space-y-5">
+              <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3 text-center">
+                <span className="text-xs text-slate-400 block mb-1">تم إرسال الرمز إلى:</span>
+                <span className="font-mono font-bold text-indigo-300 text-sm dir-ltr">{PRIMARY_ADMIN_EMAIL}</span>
               </div>
-              <h3 className="font-extrabold text-white text-base">تم إرسال رابط التوثيق بنجاح!</h3>
-              <p className="text-xs text-emerald-200 leading-relaxed">
-                يرجى فتح بريدك الإلكتروني والنقر على رابط توثيق الدخول ليتم تحويلك وتأكيد دخولك للوحة الإدارة.
-              </p>
-            </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5 text-right">رمز التحقق (6 أرقام)</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  autoFocus
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="------"
+                  className="w-full text-center tracking-[0.5em] text-2xl font-mono py-3.5 bg-slate-800 border-2 border-slate-700 focus:border-indigo-500 rounded-xl text-white font-bold outline-none"
+                />
+              </div>
+
+              {gateError && (
+                <div className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3.5 rounded-xl border border-rose-500/20 text-right flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{gateError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isVerifyingOtp || otpCode.length !== 6}
+                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{isVerifyingOtp ? 'جاري التحقق...' : 'تأكيد وتسجيل الدخول للوحة الإدارة'}</span>
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={isSendingLink}
+                  onClick={handleSendAdminOtp}
+                  className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-all cursor-pointer"
+                >
+                  إعادة إرسال الرمز
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOtpSent(false);
+                    setOtpCode('');
+                    setGateError('');
+                  }}
+                  className="py-3 px-4 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-400 font-bold text-xs transition-all cursor-pointer"
+                >
+                  رجوع
+                </button>
+              </div>
+            </form>
           )}
         </motion.div>
       </div>

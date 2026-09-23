@@ -17,6 +17,7 @@ import {
   sendSignInLinkToEmail, 
   isSignInWithEmailLink, 
   signInWithEmailLink, 
+  signInWithCustomToken,
   GoogleAuthProvider, 
   signInWithPopup, 
   onAuthStateChanged, 
@@ -50,6 +51,7 @@ export {
   sendSignInLinkToEmail,
   isSignInWithEmailLink,
   signInWithEmailLink,
+  signInWithCustomToken,
   signInWithPopup,
   onAuthStateChanged,
   signOut
