@@ -68,7 +68,7 @@ export const HomePage: React.FC<HomePageProps> = ({ navigate }) => {
               </h1>
 
               <p className="text-base sm:text-lg text-slate-600 font-medium leading-relaxed max-w-2xl">
-                أهلاً بك! أنا مهندس برمجيات مستقل متخصص في بناء وتشييد تطبيقات الهواتف الذكية (iOS & Android) والمنصات السحابية. أقدم حلاً متكاملاً من الفكرة وحتى التسليم النهائي مع ضمان صيانة شامل.
+                أهلاً بك في DevStudio! استوديو هندسي متخصص في بناء وتطوير تطبيقات الهواتف الذكية (iOS & Android) والمنصات السحابية المتقدمة. نقدّم حلولاً برمجية متكاملة من الفكرة وحتى الإطلاق مع ضمان صيانة شامل ودعم تقني مستمر.
               </p>
 
               {/* Action Buttons */}

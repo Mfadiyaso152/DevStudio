@@ -37,12 +37,19 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const DEMO_USER_STORAGE_KEY = 'applet_active_user_v1';
+const ACTIVE_USER_STORAGE_KEY = 'devstudio_auth_user_v3';
+
+// Clear previous demo/cached sessions on boot
+try {
+  localStorage.removeItem('applet_active_user_v1');
+  localStorage.removeItem('applet_studio_users_v1');
+  localStorage.removeItem('applet_studio_users_v2');
+} catch {}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(() => {
     try {
-      const saved = localStorage.getItem(DEMO_USER_STORAGE_KEY);
+      const saved = localStorage.getItem(ACTIVE_USER_STORAGE_KEY);
       if (saved) return JSON.parse(saved);
     } catch {}
     return null;
@@ -58,10 +65,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Sync state with localStorage & Firestore
   useEffect(() => {
     if (user) {
-      localStorage.setItem(DEMO_USER_STORAGE_KEY, JSON.stringify(user));
+      localStorage.setItem(ACTIVE_USER_STORAGE_KEY, JSON.stringify(user));
       saveUserProfile(user).catch(console.error);
     } else {
-      localStorage.removeItem(DEMO_USER_STORAGE_KEY);
+      localStorage.removeItem(ACTIVE_USER_STORAGE_KEY);
     }
   }, [user]);
 
@@ -203,13 +210,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const closeAuthModal = () => setIsAuthModalOpen(false);
 
   const registerUser = async (data: Omit<UserProfile, 'uid' | 'createdAt' | 'updatedAt' | 'role'>): Promise<UserProfile> => {
-    const uid = auth.currentUser?.uid || ('usr-' + Date.now());
+    const uid = user?.uid || auth.currentUser?.uid || ('usr_' + Date.now());
+    const role = user?.role || 'client';
     const now = new Date().toISOString();
     const newUserProfile: UserProfile = {
       ...data,
       uid,
-      role: 'client',
-      createdAt: now,
+      role,
+      createdAt: user?.createdAt || now,
       updatedAt: now
     };
     setUser(newUserProfile);
@@ -282,7 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: cleanEmail,
         fullName: '',
         phone: '',
-        dob: '2010-01-01',
+        dob: '',
         entityType: 'individual',
         role,
         createdAt: new Date().toISOString(),
@@ -412,8 +420,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           uid,
           email: cleanEmail,
           fullName: cleanEmail.split('@')[0],
-          phone: '+966 50 123 4567',
-          dob: '2010-01-01',
+          phone: '',
+          dob: '',
           entityType: 'individual',
           role,
           createdAt: new Date().toISOString(),
@@ -540,7 +548,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signOut(auth);
     } catch {}
     setUser(null);
-    localStorage.removeItem(DEMO_USER_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_USER_STORAGE_KEY);
     window.location.href = '/auth';
   };
 

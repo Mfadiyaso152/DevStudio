@@ -19,6 +19,12 @@ export function AppContent() {
                   user?.email?.toLowerCase() === 'mfb-15@hotmail.com' || 
                   user?.role === 'admin';
 
+  const isProfileComplete = Boolean(
+    user?.fullName?.trim() && 
+    user?.phone?.trim() && 
+    user?.dob?.trim()
+  );
+
   const [currentPath, setCurrentPath] = useState<string>(() => {
     const path = window.location.pathname;
     if (path.includes('/auth') || path.includes('/login')) return '/auth';
@@ -35,17 +41,33 @@ export function AppContent() {
   // If user is already authenticated and visits root or landing, seamlessly direct to /home or /admin
   useEffect(() => {
     if (isAuthenticated) {
-      if (currentPath === '/landing' || currentPath === '/' || currentPath === '/auth') {
-        const target = isAdmin ? '/admin' : '/home';
-        setCurrentPath(target);
-        window.history.replaceState({}, '', target);
+      if (isAdmin) {
+        if (currentPath === '/landing' || currentPath === '/' || currentPath === '/auth') {
+          setCurrentPath('/admin');
+          window.history.replaceState({}, '', '/admin');
+        }
+      } else if (!isProfileComplete) {
+        // Must complete survey first
+        if (currentPath !== '/auth') {
+          setCurrentPath('/auth');
+          window.history.replaceState({}, '', '/auth');
+        }
+      } else {
+        if (currentPath === '/landing' || currentPath === '/' || currentPath === '/auth') {
+          setCurrentPath('/home');
+          window.history.replaceState({}, '', '/home');
+        }
       }
     }
-  }, [isAuthenticated, isAdmin, currentPath]);
+  }, [isAuthenticated, isAdmin, isProfileComplete, currentPath]);
 
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname;
+      if (isAuthenticated && !isAdmin && !isProfileComplete) {
+        setCurrentPath('/auth');
+        return;
+      }
       if (path === '/' || path === '' || path.includes('/landing')) setCurrentPath('/landing');
       else if (path.includes('/auth') || path.includes('/login')) setCurrentPath('/auth');
       else if (path.includes('/home')) setCurrentPath('/home');
@@ -60,7 +82,7 @@ export function AppContent() {
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [isAuthenticated, isAdmin, isProfileComplete]);
 
   const navigate = (path: string) => {
     window.history.pushState({}, '', path);

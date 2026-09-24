@@ -21,6 +21,7 @@ import { convertArabicToEnglishDigits } from '../lib/db';
 
 export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navigate }) => {
   const { 
+    user,
     registerUser, 
     loginWithGoogle, 
     sendOtp,
@@ -44,12 +45,45 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   // Registration wizard steps
   const [accountType, setAccountType] = useState<AccountType>('individual');
   const [companyName, setCompanyName] = useState('');
-  const [dob, setDob] = useState('2010-01-01');
+  const [dob, setDob] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
 
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // If already authenticated with incomplete survey, automatically open wizard at Step 2
+  React.useEffect(() => {
+    if (user) {
+      const isAdmin = user.role === 'admin' || 
+                      user.email.toLowerCase() === 'mfb.15@icloud.com' || 
+                      user.email.toLowerCase() === 'mfb-15@hotmail.com';
+      if (isAdmin) {
+        navigate('/admin');
+        return;
+      }
+
+      const isComplete = Boolean(
+        user.fullName && user.fullName.trim() && 
+        user.phone && user.phone.trim() && 
+        user.dob && user.dob.trim()
+      );
+
+      if (isComplete) {
+        navigate('/home');
+        return;
+      }
+
+      setEmail(user.email || '');
+      setFullName(user.fullName || '');
+      setPhone(user.phone || '');
+      setDob(user.dob || '');
+      setAccountType(user.entityType || 'individual');
+      if (user.companyName) setCompanyName(user.companyName);
+
+      setStep(2);
+    }
+  }, [user, navigate]);
 
   const formatErrorMessage = (err: any, fallback: string): string => {
     if (!err) return fallback;
@@ -205,8 +239,13 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
       setErrorMsg('يرجى كتابة الاسم الكامل');
       return;
     }
-    if (!phone.trim() || phone.length < 8) {
-      setErrorMsg('يرجى كتابة رقم جوال صحيح');
+    const cleanPhone = convertArabicToEnglishDigits(phone.trim()).replace(/[^0-9+]/g, '');
+    if (!cleanPhone || cleanPhone.length < 8) {
+      setErrorMsg('يرجى كتابة رقم جوال صحيح (مثال: 05xxxxxxxx)');
+      return;
+    }
+    if (!dob) {
+      setErrorMsg('يرجى تحديد تاريخ الميلاد');
       return;
     }
 
@@ -217,8 +256,8 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
       await registerUser({
         email: email.trim().toLowerCase(),
         fullName: fullName.trim(),
-        phone: phone.trim(),
-        dob,
+        phone: cleanPhone,
+        dob: dob.trim(),
         entityType: accountType,
         companyName: accountType === 'company' ? companyName.trim() : undefined,
       });
@@ -232,13 +271,13 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative selection:bg-indigo-500 selection:text-white" dir="rtl">
+    <div className="min-h-screen bg-slate-950 text-white font-['Tajawal',sans-serif] flex flex-col justify-center items-center py-12 px-4 sm:px-6 lg:px-8 relative selection:bg-indigo-500 selection:text-white w-full" dir="rtl">
       
       {/* Ambient background glows */}
-      <div className="absolute top-10 left-1/4 w-96 h-96 bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-10 right-1/4 w-96 h-96 bg-teal-500/15 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-indigo-600/20 rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-teal-500/15 rounded-full blur-[140px] pointer-events-none" />
 
-      <div className="sm:mx-auto sm:w-full sm:max-w-md px-4 relative z-10 space-y-6">
+      <div className="w-full max-w-md mx-auto relative z-10 space-y-6">
         
         {/* Header Branding */}
         <div className="text-center space-y-2">
@@ -251,7 +290,7 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
         </div>
 
         {/* Card Body */}
-        <div className="bg-slate-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl p-8 space-y-6">
+        <div className="bg-slate-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl p-6 sm:p-8 space-y-6 w-full text-right">
           
           {/* Error / Success Notifications */}
           {errorMsg && (

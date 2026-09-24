@@ -226,9 +226,9 @@ export async function sendOtpService(rawEmail: string): Promise<{
     console.warn('[Firestore write skipped for OTP - memory store active]:', dbErr?.message || dbErr);
   }
 
-  // Send Email via Resend with exact sender: DevStudio <no-reply@dev.wathiq.site>
+  // Send Email via Resend with exact sender: DevStudio <no-reply@studio.wathiq.site>
   const resendApiKey = process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY;
-  const fromEmail = process.env.RESEND_FROM_EMAIL || 'DevStudio <no-reply@dev.wathiq.site>';
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'DevStudio <no-reply@studio.wathiq.site>';
   
   if (resendApiKey) {
     const resend = new Resend(resendApiKey);
