@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { sendOtpService } from '../auth-service';
+import { sendOtpService } from './auth-service';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS & Content-Type Headers
@@ -29,9 +29,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = await sendOtpService(email);
     return res.status(200).json(result);
   } catch (err: any) {
+    const errorMsg = err?.message || 'فشل إرسال رمز التحقق';
     return res.status(400).json({
       success: false,
-      error: err?.message || 'فشل إرسال رمز التحقق'
+      error: errorMsg
     });
   }
 }
