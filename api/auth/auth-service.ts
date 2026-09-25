@@ -1,16 +1,14 @@
 import crypto from 'crypto';
-import { getApps, initializeApp, cert, App } from 'firebase-admin/app';
-import { getFirestore, Firestore } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
 
-// Default Firebase Project configuration fallback
+// Default Firebase Project configuration for DevStudio
 const DEFAULT_FIREBASE_CONFIG = {
   projectId: 'dev-studi',
   authDomain: 'dev-studi.firebaseapp.com',
-  firestoreDatabaseId: 'ai-studio-b33db464-7b86-419f-9183-4f6efefd96f6'
+  firestoreDatabaseId: 'ai-studio-b33db464-7b86-419f-9183-4f6efefd96f6',
+  apiKey: 'AIzaSyDXpIct6xdbQeyvvb6cPuYPLHy8SyBhguw'
 };
 
-// In-memory OTP cache as fast fallback & rate-limiter
+// In-memory OTP cache for sub-millisecond local execution
 interface OtpRecord {
   email: string;
   otpHash: string;
@@ -44,21 +42,6 @@ export function normalizeInputDigits(str: string): string {
     .trim();
 }
 
-/**
- * Format private key cleanly handling escaped newlines, wrapping quotes, and carriage returns
- */
-function formatPrivateKey(key?: string): string | undefined {
-  if (!key) return undefined;
-  let formatted = cleanEnv(key);
-  
-  // Replace literal \n or \\n with real newline characters
-  formatted = formatted.replace(/\\n/g, '\n');
-  // Remove carriage returns \r
-  formatted = formatted.replace(/\r/g, '');
-  
-  return formatted.trim();
-}
-
 function isValidResendApiKey(key?: string): boolean {
   if (!key) return false;
   const k = cleanEnv(key);
@@ -82,106 +65,6 @@ function safeCompareHash(a: string, b: string): boolean {
   }
 }
 
-/**
- * Check if valid Firebase Service Account credentials are provided
- */
-export function hasValidServiceAccount(): boolean {
-  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (serviceAccountKey) {
-    try {
-      const raw = cleanEnv(serviceAccountKey);
-      const parsed = raw.startsWith('{')
-        ? JSON.parse(raw)
-        : JSON.parse(Buffer.from(raw, 'base64').toString('utf-8'));
-      if (parsed.private_key && parsed.client_email) return true;
-    } catch {}
-  }
-
-  const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
-  const privateKey = formatPrivateKey(rawPrivateKey);
-  const clientEmail = cleanEnv(process.env.FIREBASE_CLIENT_EMAIL);
-
-  if (privateKey && privateKey.includes('BEGIN PRIVATE KEY') && clientEmail && clientEmail.includes('@') && !clientEmail.includes('example.com')) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Initialize Firebase Admin safely ensuring single initialization
- * CRITICAL for Vercel/Production: NEVER initialize without explicit credentials (no ADC on AWS Lambda)
- */
-export function initFirebaseAdmin(): App | null {
-  const existingApps = getApps();
-  if (existingApps.length > 0 && existingApps[0]) {
-    return existingApps[0];
-  }
-
-  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_SERVICE_ACCOUNT;
-  const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
-  const privateKey = formatPrivateKey(rawPrivateKey);
-  const clientEmail = cleanEnv(process.env.FIREBASE_CLIENT_EMAIL);
-  const projectId = cleanEnv(process.env.FIREBASE_PROJECT_ID) || DEFAULT_FIREBASE_CONFIG.projectId;
-
-  try {
-    if (serviceAccountKey) {
-      try {
-        const raw = cleanEnv(serviceAccountKey);
-        const parsed = raw.startsWith('{')
-          ? JSON.parse(raw)
-          : JSON.parse(Buffer.from(raw, 'base64').toString('utf-8'));
-        
-        if (parsed.private_key && parsed.client_email) {
-          return initializeApp({
-            credential: cert(parsed),
-            projectId: parsed.project_id || projectId,
-          });
-        }
-      } catch (parseErr) {
-        // Silent fallback
-      }
-    }
-
-    if (privateKey && privateKey.includes('BEGIN PRIVATE KEY') && clientEmail && clientEmail.includes('@') && !clientEmail.includes('example.com')) {
-      try {
-        return initializeApp({
-          credential: cert({
-            projectId,
-            clientEmail,
-            privateKey,
-          }),
-          projectId,
-        });
-      } catch (certErr) {
-        // Silent fallback
-      }
-    }
-
-    // On Vercel / non-GCP hosting, do not initialize with empty credentials to avoid ADC metadata hangs
-    return null;
-  } catch (err: any) {
-    const apps = getApps();
-    if (apps.length > 0 && apps[0]) return apps[0];
-    return null;
-  }
-}
-
-function getFirestoreInstance(): Firestore | null {
-  if (!hasValidServiceAccount()) {
-    return null;
-  }
-  try {
-    const app = initFirebaseAdmin();
-    if (app) {
-      return getFirestore(app);
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // SHA-256 Hash with salt
 export function hashOtp(email: string, otp: string): string {
   const salt = cleanEnv(process.env.OTP_SALT) || 'devstudio_secure_otp_salt_2026';
@@ -198,11 +81,153 @@ export function generateNumericOtp(): string {
 }
 
 /**
+ * Save OTP record securely to Firestore REST API & Memory
+ */
+async function saveOtpRecord(record: OtpRecord): Promise<void> {
+  // 1. Update in-memory L1 cache
+  otpMemoryStore.set(record.email, record);
+
+  // 2. Direct Firestore REST API (Universal persistence for all Vercel serverless instances)
+  try {
+    const projectId = cleanEnv(process.env.FIREBASE_PROJECT_ID) || DEFAULT_FIREBASE_CONFIG.projectId;
+    const databaseId = cleanEnv(process.env.FIREBASE_DATABASE_ID) || DEFAULT_FIREBASE_CONFIG.firestoreDatabaseId;
+    const apiKey = cleanEnv(process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY) || DEFAULT_FIREBASE_CONFIG.apiKey;
+    const docPath = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/emailOtps/${encodeURIComponent(record.email)}?key=${apiKey}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const response = await fetch(docPath, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          email: { stringValue: record.email },
+          otpHash: { stringValue: record.otpHash },
+          attempts: { integerValue: String(record.attempts) },
+          maxAttempts: { integerValue: String(record.maxAttempts) },
+          createdAt: { stringValue: new Date(record.createdAt).toISOString() },
+          expiresAt: { stringValue: new Date(record.expiresAt).toISOString() },
+          used: { booleanValue: record.used },
+        }
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      console.log(`[STAGE: FIRESTORE_WRITE_SUCCESS] Document saved in emailOtps`);
+    } else {
+      console.warn(`[STAGE: FIRESTORE_WRITE_STATUS] HTTP ${response.status}`);
+    }
+  } catch (restErr: any) {
+    console.warn(`[STAGE: FIRESTORE_WRITE_NOTICE] Memory cache active: ${restErr?.message || restErr}`);
+  }
+}
+
+/**
+ * Fetch OTP record from Firestore REST API or memory
+ */
+async function fetchOtpRecord(email: string): Promise<OtpRecord | null> {
+  const now = Date.now();
+
+  // 1. Direct Firestore REST API
+  try {
+    const projectId = cleanEnv(process.env.FIREBASE_PROJECT_ID) || DEFAULT_FIREBASE_CONFIG.projectId;
+    const databaseId = cleanEnv(process.env.FIREBASE_DATABASE_ID) || DEFAULT_FIREBASE_CONFIG.firestoreDatabaseId;
+    const apiKey = cleanEnv(process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY) || DEFAULT_FIREBASE_CONFIG.apiKey;
+    const docPath = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/emailOtps/${encodeURIComponent(email)}?key=${apiKey}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const response = await fetch(docPath, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const json = await response.json();
+      const fields = json?.fields;
+      if (fields && fields.otpHash?.stringValue) {
+        return {
+          email: fields.email?.stringValue || email,
+          otpHash: fields.otpHash.stringValue,
+          attempts: Number(fields.attempts?.integerValue) || 0,
+          maxAttempts: Number(fields.maxAttempts?.integerValue) || 5,
+          createdAt: fields.createdAt?.stringValue ? new Date(fields.createdAt.stringValue).getTime() : now,
+          expiresAt: fields.expiresAt?.stringValue ? new Date(fields.expiresAt.stringValue).getTime() : now,
+          used: !!fields.used?.booleanValue,
+        };
+      }
+    }
+  } catch (restErr: any) {
+    console.warn('[Firestore REST read notice]:', restErr?.message || restErr);
+  }
+
+  // 2. Fallback to in-memory L1 cache
+  const memRecord = otpMemoryStore.get(email);
+  if (memRecord) {
+    return memRecord;
+  }
+
+  return null;
+}
+
+/**
+ * Update OTP record status in Firestore
+ */
+async function updateOtpStatus(email: string, patch: { attempts?: number; used?: boolean; verifiedAt?: string }): Promise<void> {
+  // Update L1 Cache
+  const mem = otpMemoryStore.get(email);
+  if (mem) {
+    if (typeof patch.attempts === 'number') mem.attempts = patch.attempts;
+    if (typeof patch.used === 'boolean') mem.used = patch.used;
+    otpMemoryStore.set(email, mem);
+  }
+
+  // Direct Firestore REST API
+  try {
+    const projectId = cleanEnv(process.env.FIREBASE_PROJECT_ID) || DEFAULT_FIREBASE_CONFIG.projectId;
+    const databaseId = cleanEnv(process.env.FIREBASE_DATABASE_ID) || DEFAULT_FIREBASE_CONFIG.firestoreDatabaseId;
+    const apiKey = cleanEnv(process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY) || DEFAULT_FIREBASE_CONFIG.apiKey;
+    
+    const maskParams: string[] = [];
+    const fields: any = {};
+    if (typeof patch.attempts === 'number') {
+      maskParams.push('updateMask.fieldPaths=attempts');
+      fields.attempts = { integerValue: String(patch.attempts) };
+    }
+    if (typeof patch.used === 'boolean') {
+      maskParams.push('updateMask.fieldPaths=used');
+      fields.used = { booleanValue: patch.used };
+    }
+    if (patch.verifiedAt) {
+      maskParams.push('updateMask.fieldPaths=verifiedAt');
+      fields.verifiedAt = { stringValue: patch.verifiedAt };
+    }
+
+    const docPath = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/emailOtps/${encodeURIComponent(email)}?key=${apiKey}&${maskParams.join('&')}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    await fetch(docPath, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+  } catch {}
+}
+
+/**
  * Send OTP Service
  * Rate limit: 60 seconds
  * Expiration: 10 minutes
  * Max attempts: 5
- * Collection in Firestore: 'emailOtps'
  */
 export async function sendOtpService(rawEmail: string): Promise<{
   success: boolean;
@@ -218,7 +243,7 @@ export async function sendOtpService(rawEmail: string): Promise<{
   }
 
   const now = Date.now();
-  const existing = otpMemoryStore.get(email);
+  const existing = await fetchOtpRecord(email);
 
   // Enforce 60s cooldown
   if (existing && now - existing.createdAt < 60 * 1000) {
@@ -231,8 +256,8 @@ export async function sendOtpService(rawEmail: string): Promise<{
   const expiresAt = now + 10 * 60 * 1000; // 10 minutes
   console.log(`[STAGE: OTP_GENERATED] Hash created, expiration set to 10 minutes`);
 
-  // Save to Memory Store (only hash, attempts, expiry, used)
-  otpMemoryStore.set(email, {
+  // Save to Firestore & Memory (ONLY store hash, never plain OTP)
+  await saveOtpRecord({
     email,
     otpHash,
     attempts: 0,
@@ -241,31 +266,6 @@ export async function sendOtpService(rawEmail: string): Promise<{
     expiresAt,
     used: false,
   });
-
-  // Save to Firestore in 'emailOtps' collection with timeout (ONLY store hash, never plain OTP)
-  try {
-    const db = getFirestoreInstance();
-    if (db) {
-      const otpsRef = db.collection('emailOtps');
-      await Promise.race([
-        otpsRef.doc(email).set({
-          email,
-          otpHash,
-          attempts: 0,
-          maxAttempts: 5,
-          createdAt: new Date(now).toISOString(),
-          expiresAt: new Date(expiresAt).toISOString(),
-          used: false,
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 4000))
-      ]);
-      console.log(`[STAGE: FIRESTORE_WRITE_SUCCESS] Hash saved in emailOtps collection`);
-    } else {
-      console.log(`[STAGE: FIRESTORE_WRITE_SKIPPED] In-memory security store active`);
-    }
-  } catch (dbErr: any) {
-    console.warn(`[STAGE: FIRESTORE_WRITE_FAILED] ${dbErr?.message || dbErr}`);
-  }
 
   // Resend Configuration & Dispatch
   const rawResendKey = cleanEnv(process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY);
@@ -428,46 +428,13 @@ export async function verifyOtpService(rawEmail: string, rawOtp: string): Promis
   }
 
   const now = Date.now();
-  let record: OtpRecord | null = null;
-
-  // 1. Fetch OTP record from Firestore 'emailOtps' collection with timeout
-  try {
-    const db = getFirestoreInstance();
-    if (db) {
-      const docSnap = await Promise.race([
-        db.collection('emailOtps').doc(email).get(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 4000))
-      ]);
-      if (docSnap && docSnap.exists) {
-        const data = docSnap.data() as any;
-        if (data && data.otpHash) {
-          record = {
-            email: data.email || email,
-            otpHash: data.otpHash,
-            attempts: data.attempts || 0,
-            maxAttempts: data.maxAttempts || 5,
-            createdAt: data.createdAt ? new Date(data.createdAt).getTime() : now,
-            expiresAt: data.expiresAt ? new Date(data.expiresAt).getTime() : now,
-            used: !!data.used,
-          };
-        }
-      }
-    }
-  } catch (err: any) {
-    console.warn('[Firestore lookup in emailOtps]:', err?.message || err);
-  }
-
-  // Fallback to Memory Store if Firestore record not found
-  if (!record) {
-    const memRecord = otpMemoryStore.get(email);
-    if (memRecord) {
-      record = memRecord;
-    }
-  }
+  
+  // 1. Fetch OTP record from Firestore REST API (or memory)
+  const record = await fetchOtpRecord(email);
 
   // If no active OTP record found for this email -> Reject
   if (!record || !record.otpHash) {
-    throw new Error('رمز التحقق غير صحيح أو منتهي الصلاحية');
+    throw new Error('لم يتم العثور على رمز تحقق نشط لهذا البريد. يرجى طلب رمز جديد.');
   }
 
   // Check if already used -> Reject
@@ -490,19 +457,9 @@ export async function verifyOtpService(rawEmail: string, rawOtp: string): Promis
   const isValid = safeCompareHash(calculatedHash, record.otpHash);
 
   if (!isValid) {
-    // Increment failed attempts
+    // Increment failed attempts and persist to Firestore
     const newAttempts = (record.attempts || 0) + 1;
-    record.attempts = newAttempts;
-    otpMemoryStore.set(email, record);
-
-    try {
-      const db = getFirestoreInstance();
-      if (db) {
-        await db.collection('emailOtps').doc(email).update({
-          attempts: newAttempts,
-        });
-      }
-    } catch {}
+    await updateOtpStatus(email, { attempts: newAttempts });
 
     const remaining = record.maxAttempts - newAttempts;
     if (remaining <= 0) {
@@ -511,69 +468,19 @@ export async function verifyOtpService(rawEmail: string, rawOtp: string): Promis
     throw new Error(`رمز التحقق غير صحيح. متبقي لديك ${remaining} ${remaining === 1 ? 'محاولة' : 'محاولات'}.`);
   }
 
-  // 3. Mark as USED immediately (Cannot be reused)
-  record.used = true;
-  otpMemoryStore.set(email, record);
+  // 3. Mark as USED immediately in Firestore
+  await updateOtpStatus(email, { used: true, verifiedAt: new Date(now).toISOString() });
 
-  try {
-    const db = getFirestoreInstance();
-    if (db) {
-      await db.collection('emailOtps').doc(email).update({
-        used: true,
-        verifiedAt: new Date(now).toISOString(),
-      });
-    }
-  } catch {}
-
-  // 4. Generate UID & Firebase Custom Token ONLY after verified OTP
+  // 4. Generate Deterministic UID & Role
   const isAdminEmail = email === 'mfb.15@icloud.com' || email === 'mfb-15@hotmail.com';
   const role = isAdminEmail ? 'admin' : 'client';
-  let uid = `usr_${crypto.createHash('md5').update(email).digest('hex').substring(0, 16)}`;
-  let customToken: string | undefined = undefined;
-
-  if (hasValidServiceAccount()) {
-    try {
-      const app = initFirebaseAdmin();
-      if (app) {
-        const auth = getAuth(app);
-        try {
-          const userRecord = await auth.getUserByEmail(email);
-          uid = userRecord.uid;
-          if (!userRecord.emailVerified) {
-            try {
-              await auth.updateUser(uid, { emailVerified: true });
-            } catch {}
-          }
-        } catch (notFoundErr: any) {
-          if (notFoundErr.code === 'auth/user-not-found') {
-            try {
-              const userRecord = await auth.createUser({
-                email,
-                emailVerified: true,
-                displayName: email.split('@')[0],
-              });
-              uid = userRecord.uid;
-            } catch {}
-          }
-        }
-
-        try {
-          customToken = await auth.createCustomToken(uid, {
-            email,
-            role,
-            emailVerified: true
-          });
-        } catch {}
-      }
-    } catch {}
-  }
+  const uid = `usr_${crypto.createHash('md5').update(email).digest('hex').substring(0, 16)}`;
 
   return {
     success: true,
     email,
     uid,
     role,
-    customToken,
     message: 'تم التحقق من الرمز بنجاح'
   };
 }

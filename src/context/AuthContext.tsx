@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, UserRole } from '../types';
-import { saveUserProfile, getUserProfile } from '../lib/db';
+import { saveUserProfile, getUserProfile, checkIfStaffEmail } from '../lib/db';
 import { 
   auth, 
   googleProvider, 
@@ -402,7 +402,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const uid = data.uid || ('usr_' + Date.now());
       const isAdminEmail = cleanEmail === 'mfb.15@icloud.com' || cleanEmail === 'mfb-15@hotmail.com';
-      const role: UserRole = isAdminEmail ? 'admin' : (data.role || 'client');
+      const isStaffEmail = checkIfStaffEmail(cleanEmail);
+      const role: UserRole = isAdminEmail ? 'admin' : (isStaffEmail ? 'staff' : (data.role || 'client'));
 
       // If customToken returned from Firebase Admin, sign in via Firebase Auth
       if (data.customToken) {
@@ -428,9 +429,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: new Date().toISOString()
         };
         await saveUserProfile(targetUser);
-      } else if (isAdminEmail && targetUser.role !== 'admin') {
-        targetUser = { ...targetUser, role: 'admin' };
-        await saveUserProfile(targetUser);
+      } else {
+        if (isAdminEmail && targetUser.role !== 'admin') {
+          targetUser = { ...targetUser, role: 'admin' };
+          await saveUserProfile(targetUser);
+        } else if (isStaffEmail && targetUser.role !== 'staff' && targetUser.role !== 'admin') {
+          targetUser = { ...targetUser, role: 'staff' };
+          await saveUserProfile(targetUser);
+        }
       }
 
       setUser(targetUser);

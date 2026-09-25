@@ -24,25 +24,59 @@ const LOCAL_STORAGE_KEYS = {
   PORTFOLIO: 'applet_studio_portfolio_v2'
 };
 
-// Helper for local storage initialized fallback
+// In-memory runtime cache backing all storage keys
+const memoryCache = new Map<string, any>();
+
+// Helper for local storage with memory cache fallback
 function getLocal<T>(key: string, initial: T): T {
+  if (memoryCache.has(key)) {
+    return memoryCache.get(key) as T;
+  }
+
   try {
-    const raw = localStorage.getItem(key);
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
     if (!raw) {
-      localStorage.setItem(key, JSON.stringify(initial));
+      memoryCache.set(key, initial);
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(key, JSON.stringify(initial));
+        } catch {}
+      }
       return initial;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    memoryCache.set(key, parsed);
+    return parsed;
   } catch {
+    memoryCache.set(key, initial);
     return initial;
   }
 }
 
 function setLocal<T>(key: string, value: T): void {
+  // Always update in-memory cache first for instant synchronous state
+  memoryCache.set(key, value);
+
+  if (typeof localStorage === 'undefined') return;
+
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch (e) {
-    console.error('LocalStorage write error:', e);
+  } catch (e: any) {
+    // Gracefully handle quota exceeded or private mode restrictions
+    if (e?.name === 'QuotaExceededError' || e?.code === 22 || e?.code === 1014 || e?.message?.includes('quota')) {
+      try {
+        // Attempt recovery: remove legacy or unneeded cache entries
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && !Object.values(LOCAL_STORAGE_KEYS).includes(k)) {
+            localStorage.removeItem(k);
+          }
+        }
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch {
+        // App will continue working uninterrupted via memoryCache and Firestore
+      }
+    }
   }
 }
 
@@ -366,6 +400,13 @@ export async function updateQuoteStatus(
 // -------------------------------------------------------------
 // STAFF & TEAM MANAGEMENT (فريق العمل)
 // -------------------------------------------------------------
+export function checkIfStaffEmail(email: string): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  const staff = getLocal<StaffMember[]>(LOCAL_STORAGE_KEYS.STAFF, INITIAL_STAFF);
+  return staff.some(s => s.email.toLowerCase() === clean);
+}
+
 export function subscribeStaff(callback: (staff: StaffMember[]) => void): () => void {
   const localStaff = getLocal<StaffMember[]>(LOCAL_STORAGE_KEYS.STAFF, INITIAL_STAFF);
   callback(localStaff);
@@ -398,25 +439,37 @@ export function subscribeStaff(callback: (staff: StaffMember[]) => void): () => 
 export async function addStaffMember(staff: Omit<StaffMember, 'id' | 'createdAt'>): Promise<StaffMember> {
   const currentStaff = getLocal<StaffMember[]>(LOCAL_STORAGE_KEYS.STAFF, INITIAL_STAFF);
   const newId = `stf_${Date.now()}`;
+  const cleanEmail = (staff.email || '').trim().toLowerCase();
+  
   const newStaffMember: StaffMember = {
     ...staff,
+    email: cleanEmail,
     id: newId,
     createdAt: new Date().toISOString()
   };
 
-  const updatedStaff = [newStaffMember, ...currentStaff];
+  const updatedStaff = [newStaffMember, ...currentStaff.filter(s => s.email.toLowerCase() !== cleanEmail)];
   setLocal(LOCAL_STORAGE_KEYS.STAFF, updatedStaff);
 
-  // If assigned to a registered user, grant staff role
-  if (staff.userId) {
-    await updateUserRole(staff.userId, 'staff');
+  // Update user profile role in local store
+  const users = getLocal<Record<string, UserProfile>>(LOCAL_STORAGE_KEYS.USERS, {});
+  const matchedUser = Object.values(users).find(u => u.email.toLowerCase() === cleanEmail || (staff.userId && u.uid === staff.userId));
+  if (matchedUser) {
+    matchedUser.role = 'staff';
+    matchedUser.updatedAt = new Date().toISOString();
+    users[matchedUser.uid] = matchedUser;
+    setLocal(LOCAL_STORAGE_KEYS.USERS, users);
   }
 
+  // Update Firestore
   if (db) {
     try {
       await setDoc(doc(db, 'staff', newId), newStaffMember);
+      if (matchedUser) {
+        await updateDoc(doc(db, 'users', matchedUser.uid), { role: 'staff', updatedAt: new Date().toISOString() });
+      }
     } catch (e) {
-      console.warn('Firestore add staff fallback:', e);
+      console.warn('Firestore add staff sync:', e);
     }
   }
 
@@ -429,15 +482,27 @@ export async function deleteStaffMember(id: string): Promise<void> {
   const filtered = currentStaff.filter(s => s.id !== id);
   setLocal(LOCAL_STORAGE_KEYS.STAFF, filtered);
 
-  if (target?.userId) {
-    await updateUserRole(target.userId, 'client');
-  }
+  if (target) {
+    const cleanEmail = target.email.trim().toLowerCase();
+    const users = getLocal<Record<string, UserProfile>>(LOCAL_STORAGE_KEYS.USERS, {});
+    const matchedUser = Object.values(users).find(u => u.email.toLowerCase() === cleanEmail || (target.userId && u.uid === target.userId));
+    
+    if (matchedUser) {
+      matchedUser.role = 'client';
+      matchedUser.updatedAt = new Date().toISOString();
+      users[matchedUser.uid] = matchedUser;
+      setLocal(LOCAL_STORAGE_KEYS.USERS, users);
+    }
 
-  if (db) {
-    try {
-      await deleteDoc(doc(db, 'staff', id));
-    } catch (e) {
-      console.warn('Firestore delete staff fallback:', e);
+    if (db) {
+      try {
+        await deleteDoc(doc(db, 'staff', id));
+        if (matchedUser) {
+          await updateDoc(doc(db, 'users', matchedUser.uid), { role: 'client', updatedAt: new Date().toISOString() });
+        }
+      } catch (e) {
+        console.warn('Firestore delete staff sync:', e);
+      }
     }
   }
 }

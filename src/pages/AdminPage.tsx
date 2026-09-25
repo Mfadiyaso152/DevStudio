@@ -48,9 +48,10 @@ import {
   getOrderCodeForQuote
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
+import { compressImageFile } from '../lib/imageUtils';
 
 export const AdminPage: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, sendOtp, verifyOtp } = useAuth();
   
   // Master Admin check
   const isMasterAdmin = user?.email?.toLowerCase() === 'mfb.15@icloud.com' || 
@@ -92,11 +93,17 @@ export const AdminPage: React.FC = () => {
   const [isSavingPortfolio, setIsSavingPortfolio] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Add Staff Modal (Select from registered users)
+  // Add Staff Modal with Email OTP verification (Max 2 staff members)
   const [isAddStaffOpen, setIsAddStaffOpen] = useState<boolean>(false);
-  const [selectedStaffUserId, setSelectedStaffUserId] = useState<string>('');
-  const [staffRoleLabel, setStaffRoleLabel] = useState<string>('مطور برمجيات');
-  const [isSavingStaff, setIsSavingStaff] = useState<boolean>(false);
+  const [staffStep, setStaffStep] = useState<'input' | 'otp'>('input');
+  const [staffEmail, setStaffEmail] = useState<string>('');
+  const [staffFullName, setStaffFullName] = useState<string>('');
+  const [staffRoleLabel, setStaffRoleLabel] = useState<string>('مشرف إدارة ومطور');
+  const [staffOtp, setStaffOtp] = useState<string>('');
+  const [isSendingStaffOtp, setIsSendingStaffOtp] = useState<boolean>(false);
+  const [isVerifyingStaffOtp, setIsVerifyingStaffOtp] = useState<boolean>(false);
+  const [staffErrorMsg, setStaffErrorMsg] = useState<string>('');
+  const [staffSuccessMsg, setStaffSuccessMsg] = useState<string>('');
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -227,7 +234,7 @@ export const AdminPage: React.FC = () => {
   };
 
   // Handle Image Upload for Portfolio
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -236,13 +243,18 @@ export const AdminPage: React.FC = () => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setPortfolioImage(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedData = await compressImageFile(file, 1000, 0.75);
+      setPortfolioImage(compressedData);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setPortfolioImage(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Handle Add / Edit Portfolio Project
@@ -303,52 +315,87 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  // Handle Add Staff from registered users
-  const handleAssignStaff = async (e: React.FormEvent) => {
+  // Step 1: Send real OTP to staff email
+  const handleSendStaffOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedStaffUserId) {
-      showToast('يرجى اختيار مستخدم من القائمة لتعيينه كموظف');
+    const cleanEmail = staffEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setStaffErrorMsg('يرجى إدخال بريد إلكتروني صحيح للموظف');
+      return;
+    }
+    if (staffList.length >= 2) {
+      setStaffErrorMsg('تم الوصول للحد الأقصى لعدد الموظفين (2 موظفين)');
       return;
     }
 
-    const targetUser = allUsers.find(u => u.uid === selectedStaffUserId);
-    if (!targetUser) {
-      showToast('المستخدم المحدد غير موجود');
-      return;
-    }
+    setIsSendingStaffOtp(true);
+    setStaffErrorMsg('');
+    setStaffSuccessMsg('');
 
-    setIsSavingStaff(true);
     try {
+      const res = await sendOtp(cleanEmail);
+      setStaffSuccessMsg(res.message || `تم إرسال رمز التحقق بنجاح إلى ${cleanEmail}`);
+      setStaffStep('otp');
+    } catch (err: any) {
+      setStaffErrorMsg(err.message || 'فشل إرسال رمز التحقق للبريد');
+    } finally {
+      setIsSendingStaffOtp(false);
+    }
+  };
+
+  // Step 2: Verify OTP and Add Staff Member
+  const handleVerifyAndAddStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = staffEmail.trim().toLowerCase();
+    const cleanOtp = staffOtp.trim();
+
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      setStaffErrorMsg('يرجى إدخال رمز التحقق المكون من 6 أرقام');
+      return;
+    }
+
+    setIsVerifyingStaffOtp(true);
+    setStaffErrorMsg('');
+
+    try {
+      // 1. Verify OTP with server API
+      await verifyOtp(cleanEmail, cleanOtp);
+
+      // 2. Add staff member to database & grant full admin permissions
       await addStaffMember({
-        userId: targetUser.uid,
-        fullName: targetUser.fullName || targetUser.email.split('@')[0],
-        email: targetUser.email,
-        phone: targetUser.phone || '',
-        role: 'developer',
-        roleLabel: staffRoleLabel.trim() || 'مطور برمجيات',
-        department: 'قسم البرمجة',
+        fullName: staffFullName.trim() || cleanEmail.split('@')[0],
+        email: cleanEmail,
+        phone: '',
+        role: 'admin',
+        roleLabel: staffRoleLabel.trim() || 'مشرف إدارة ومطور',
+        department: 'قسم الإدارة والبرمجة',
         status: 'active',
         assignedProjectsCount: 0
       });
 
-      showToast(`تم تعيين ${targetUser.fullName || targetUser.email} كموظف بنجاح`);
+      showToast(`تم التحقق من الرمز وتعيين ${cleanEmail} كموظف بصلاحيات كاملة!`);
       setIsAddStaffOpen(false);
-      setSelectedStaffUserId('');
+      setStaffStep('input');
+      setStaffEmail('');
+      setStaffFullName('');
+      setStaffOtp('');
+      setStaffErrorMsg('');
+      setStaffSuccessMsg('');
     } catch (err: any) {
-      showToast(err.message || 'فشل تعيين الموظف');
+      setStaffErrorMsg(err.message || 'رمز التحقق غير صحيح أو منتهي الصلاحية');
     } finally {
-      setIsSavingStaff(false);
+      setIsVerifyingStaffOtp(false);
     }
   };
 
   // Handle Delete Staff
   const handleDeleteStaff = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من إزالة هذا الموظف وإعادة صلاحياته كعميل؟')) return;
+    if (!window.confirm('هل أنت متأكد من إلغاء صلاحيات هذا الموظف وإعادته لحساب عميل؟')) return;
     try {
       await deleteStaffMember(id);
-      showToast('تم حذف الموظف وإعادة صلاحياته بنجاح');
+      showToast('تم إلغاء صلاحيات الموظف بنجاح');
     } catch (err: any) {
-      showToast(err.message || 'فشل حذف الموظف');
+      showToast(err.message || 'فشل إلغاء صلاحيات الموظف');
     }
   };
 
@@ -881,54 +928,83 @@ export const AdminPage: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">فريق العمل والموظفين</h2>
-                <p className="text-xs text-slate-500 mt-1">إدارة الموظفين ومنحهم الصلاحيات الإدارية</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  إدارة الموظفين ومنحهم الصلاحيات الإدارية الكاملة (الموظفون المضافون: {staffList.length} من أصل 2 كحد أقصى)
+                </p>
               </div>
 
               {isMasterAdmin && (
-                <button
-                  onClick={() => setIsAddStaffOpen(true)}
-                  className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center gap-2 cursor-pointer self-start"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>تعيين موظف</span>
-                </button>
+                staffList.length >= 2 ? (
+                  <button
+                    disabled
+                    className="px-5 py-3 bg-slate-200 text-slate-400 font-bold text-xs rounded-xl border border-slate-300 cursor-not-allowed flex items-center gap-2 self-start shadow-none"
+                    title="تم الوصول للحد الأقصى لعدد الموظفين (2/2)"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>تعيين موظف (الحد الأقصى: 2/2)</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsAddStaffOpen(true);
+                      setStaffStep('input');
+                      setStaffEmail('');
+                      setStaffFullName('');
+                      setStaffOtp('');
+                      setStaffErrorMsg('');
+                      setStaffSuccessMsg('');
+                    }}
+                    className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center gap-2 cursor-pointer self-start active:scale-95"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>تعيين موظف ({staffList.length}/2)</span>
+                  </button>
+                )
               )}
             </div>
 
             {/* Staff List */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {staffList.map((stf) => (
-                <div
-                  key={stf.id}
-                  className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 flex flex-col justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-black text-base flex items-center justify-center">
-                      {stf.fullName.charAt(0)}
+            {staffList.length === 0 ? (
+              <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+                <User className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-slate-500 text-sm font-semibold">لم يتم إضافة موظفين بعد (يمكنك تعيين حتى موظفين اثنين كحد أقصى عبر التحقق بالبريد)</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {staffList.map((stf) => (
+                  <div
+                    key={stf.id}
+                    className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 flex flex-col justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-black text-base flex items-center justify-center">
+                        {stf.fullName ? stf.fullName.charAt(0).toUpperCase() : 'M'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-base font-extrabold text-slate-900 truncate">{stf.fullName}</h3>
+                        <p className="text-xs text-slate-500 truncate" dir="ltr">{stf.email}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-base font-extrabold text-slate-900">{stf.fullName}</h3>
-                      <p className="text-xs text-slate-500">{stf.email}</p>
+
+                    <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs space-y-1">
+                      <div className="text-slate-500">المسمى: <strong className="text-slate-900">{stf.roleLabel || 'مشرف إدارة'}</strong></div>
+                      <div className="text-slate-500">الصلاحيات: <span className="text-indigo-700 font-bold">لوحة تحكم إدارية كاملة</span></div>
+                      <div className="text-slate-500">الحالة: <span className="text-emerald-700 font-bold">نشط ومفعل</span></div>
                     </div>
-                  </div>
 
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs space-y-1">
-                    <div className="text-slate-500">المسمى: <strong className="text-slate-900">{stf.roleLabel || 'مطور برمجيات'}</strong></div>
-                    <div className="text-slate-500">الحالة: <span className="text-emerald-700 font-bold">نشط ومفعل</span></div>
+                    {isMasterAdmin && (
+                      <button
+                        onClick={() => handleDeleteStaff(stf.id)}
+                        className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-colors flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>إلغاء صلاحيات الموظف</span>
+                      </button>
+                    )}
                   </div>
-
-                  {isMasterAdmin && (
-                    <button
-                      onClick={() => handleDeleteStaff(stf.id)}
-                      className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      <span>إلغاء صلاحيات الموظف</span>
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -1155,7 +1231,7 @@ export const AdminPage: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* MODAL 4: ADD STAFF (WITHOUT DEPARTMENT FIELD, SHORT BUTTON) */}
+      {/* MODAL 4: ADD STAFF WITH REAL EMAIL OTP VERIFICATION */}
       <AnimatePresence>
         {isAddStaffOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -1166,52 +1242,133 @@ export const AdminPage: React.FC = () => {
               className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-6 text-right"
             >
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                <h3 className="text-xl font-black text-slate-900">تعيين موظف جديد</h3>
-                <button onClick={() => setIsAddStaffOpen(false)} className="p-2 text-slate-400 hover:text-slate-700">
+                <div>
+                  <h3 className="text-xl font-black text-slate-900">تعيين موظف جديد</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">التحقق بالبريد الإلكتروني الحقيقي (الحد الأقصى: 2)</p>
+                </div>
+                <button 
+                  onClick={() => setIsAddStaffOpen(false)} 
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <form onSubmit={handleAssignStaff} className="space-y-4 text-xs">
-                <div>
-                  <label className="block font-bold text-slate-800 mb-1">اختر المستخدم المسجل</label>
-                  <select
-                    required
-                    value={selectedStaffUserId}
-                    onChange={(e) => setSelectedStaffUserId(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">-- اختر مستخدم من النظام --</option>
-                    {allUsers.map((u) => (
-                      <option key={u.uid} value={u.uid}>
-                        {u.fullName || u.email} ({u.email})
-                      </option>
-                    ))}
-                  </select>
+              {staffErrorMsg && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-center gap-2">
+                  <XCircle className="w-4 h-4 shrink-0" />
+                  <span>{staffErrorMsg}</span>
                 </div>
+              )}
 
-                <div>
-                  <label className="block font-bold text-slate-800 mb-1">المسمى الوظيفي</label>
-                  <input
-                    type="text"
-                    required
-                    value={staffRoleLabel}
-                    onChange={(e) => setStaffRoleLabel(e.target.value)}
-                    placeholder="مثال: مطور برمجيات جوال"
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+              {staffSuccessMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{staffSuccessMsg}</span>
                 </div>
+              )}
 
-                <div className="pt-3 border-t border-slate-100">
-                  <button
-                    type="submit"
-                    disabled={isSavingStaff}
-                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer"
-                  >
-                    {isSavingStaff ? 'جاري التعيين...' : 'تعيين موظف'}
-                  </button>
-                </div>
-              </form>
+              {staffStep === 'input' ? (
+                <form onSubmit={handleSendStaffOtp} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block font-bold text-slate-800 mb-1">البريد الإلكتروني للموظف</label>
+                    <input
+                      type="email"
+                      required
+                      value={staffEmail}
+                      onChange={(e) => setStaffEmail(e.target.value)}
+                      placeholder="employee@example.com"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium text-left focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-800 mb-1">اسم الموظف</label>
+                    <input
+                      type="text"
+                      value={staffFullName}
+                      onChange={(e) => setStaffFullName(e.target.value)}
+                      placeholder="مثال: عبد الله محمد"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-800 mb-1">المسمى الوظيفي</label>
+                    <input
+                      type="text"
+                      required
+                      value={staffRoleLabel}
+                      onChange={(e) => setStaffRoleLabel(e.target.value)}
+                      placeholder="مثال: مشرف إدارة ومطور برمجيات"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100">
+                    <button
+                      type="submit"
+                      disabled={isSendingStaffOtp}
+                      className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      {isSendingStaffOtp ? (
+                        <span>جاري إرسال رمز التحقق...</span>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          <span>إرسال رمز التحقق للبريد</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleVerifyAndAddStaff} className="space-y-4 text-xs">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-xs">
+                    تم إرسال رمز تحقق مكوّن من 6 أرقام إلى: <strong className="text-slate-900 block mt-1 font-mono" dir="ltr">{staffEmail}</strong>
+                    يرجى إدخال الرمز لتأكيد التعيين وتفعيل صلاحيات الإدارة للموظف.
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-800 mb-1">رمز التحقق (6 أرقام)</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      value={staffOtp}
+                      onChange={(e) => setStaffOtp(convertArabicToEnglishDigits(e.target.value).replace(/\D/g, ''))}
+                      placeholder="••••••"
+                      className="w-full px-4 py-3 bg-slate-50 border-2 border-indigo-500 rounded-xl text-indigo-900 text-center font-mono font-black text-2xl tracking-[8px] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setStaffStep('input')}
+                      className="py-3.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer"
+                    >
+                      رجوع
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isVerifyingStaffOtp || staffOtp.length !== 6}
+                      className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-100 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      {isVerifyingStaffOtp ? (
+                        <span>جاري التحقق والتعيين...</span>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>تأكيد الرمز وتعيين الموظف</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
             </motion.div>
           </div>
         )}
