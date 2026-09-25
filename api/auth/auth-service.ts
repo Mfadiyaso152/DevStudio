@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Resend } from 'resend';
 
 // Default Firebase Project configuration for DevStudio
 const DEFAULT_FIREBASE_CONFIG = {
@@ -267,10 +268,10 @@ export async function sendOtpService(rawEmail: string): Promise<{
     used: false,
   });
 
-  // Resend Configuration & Dispatch
+  // Resend Configuration & Dispatch (Strictly Server-Side)
   const rawResendKey = cleanEnv(process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY);
-  const isResendConfigured = isValidResendApiKey(rawResendKey);
-  
+  console.log("Resend Key Present:", !!rawResendKey);
+
   let rawFrom = cleanEnv(process.env.RESEND_FROM_EMAIL);
   if (!rawFrom || rawFrom.includes('dev.wathiq.site')) {
     rawFrom = rawFrom 
@@ -279,7 +280,7 @@ export async function sendOtpService(rawEmail: string): Promise<{
   }
   const fromEmail = rawFrom;
   
-  if (isResendConfigured && rawResendKey) {
+  if (rawResendKey && isValidResendApiKey(rawResendKey)) {
     console.log(`[STAGE: RESEND_REQUEST_STARTED] Sender: ${fromEmail}, Recipient: ${email}, KeyConfigured: true`);
     
     try {
@@ -323,34 +324,7 @@ export async function sendOtpService(rawEmail: string): Promise<{
       </html>
       `;
 
-      // Dispatch email via Resend REST API with AbortController timeout
-      const dispatchEmail = async (sender: string) => {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        try {
-          const response = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${rawResendKey}`,
-              'Content-Type': 'application/json',
-              'User-Agent': 'DevStudio/1.0',
-            },
-            body: JSON.stringify({
-              from: sender,
-              to: [email],
-              subject: `رمز التحقق الخاص بك: ${otp}`,
-              html: emailHtml,
-            }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-          const resData = await response.json().catch(() => ({}));
-          return { ok: response.ok, status: response.status, data: resData };
-        } catch (fetchErr: any) {
-          clearTimeout(timeoutId);
-          return { ok: false, status: 0, data: { message: fetchErr?.message || 'Fetch failed' } };
-        }
-      };
+      const resend = new Resend(rawResendKey);
 
       // Candidate senders to try in order of priority
       const candidateSenders = [
@@ -363,24 +337,48 @@ export async function sendOtpService(rawEmail: string): Promise<{
 
       // Remove duplicate senders
       const uniqueSenders = Array.from(new Set(candidateSenders));
+      let lastError: any = null;
       let sentSuccess = false;
 
       for (const sender of uniqueSenders) {
         if (sentSuccess) break;
-        const result = await dispatchEmail(sender);
-        if (result.ok && result.data?.id) {
-          console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Email sent successfully via ${sender} (id: ${result.data.id})`);
-          sentSuccess = true;
-          break;
-        } else {
-          console.warn(`[STAGE: RESEND_TRY_FAILED] Sender ${sender} returned status ${result.status}: ${JSON.stringify(result.data)}`);
+        try {
+          console.log(`[STAGE: RESEND_SEND_ATTEMPT] Attempting via sender: ${sender}`);
+          const { data, error } = await resend.emails.send({
+            from: sender,
+            to: [email],
+            subject: `رمز التحقق الخاص بك: ${otp}`,
+            html: emailHtml,
+          });
+
+          if (error) {
+            lastError = error;
+            console.error(`[STAGE: RESEND_ERROR_RESPONSE] Sender ${sender} failed:`, JSON.stringify(error));
+          } else if (data && data.id) {
+            console.log(`[STAGE: RESEND_SUCCESS] Email sent successfully via ${sender} with ID: ${data.id}`);
+            sentSuccess = true;
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          console.error(`[STAGE: RESEND_EXCEPTION] Exception thrown during send via ${sender}:`, JSON.stringify(err));
         }
       }
+
+      if (!sentSuccess && lastError) {
+        console.error("[STAGE: RESEND_DISPATCH_FAILED] All send attempts failed. Raw Error:", JSON.stringify(lastError));
+        throw {
+          code: lastError?.name || lastError?.code || 'RESEND_DISPATCH_FAILED',
+          message: lastError?.message || 'فشل إرسال البريد الإلكتروني عبر مزود الخدمة',
+          details: JSON.stringify(lastError)
+        };
+      }
     } catch (resendErr: any) {
-      console.warn(`[STAGE: RESEND_REQUEST_FAILED] Network / Exception: ${resendErr?.message || resendErr}`);
+      console.error(`[STAGE: RESEND_REQUEST_FAILED] Network / Exception:`, JSON.stringify(resendErr));
+      throw resendErr;
     }
   } else {
-    console.log(`[STAGE: RESEND_SKIPPED] RESEND_API_KEY is not set or placeholder.`);
+    console.warn("Resend Key Present: false (RESEND_API_KEY is missing or invalid in server environment)");
   }
 
   console.log(`[STAGE: OTP_READY] OTP cycle complete for ${email}`);

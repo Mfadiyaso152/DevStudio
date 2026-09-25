@@ -2,6 +2,9 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { sendOtpService } from './auth-service';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Log the API key status on invocation as requested
+  console.log("Resend Key Present:", !!process.env.RESEND_API_KEY);
+
   // 1. Comprehensive CORS & Security Headers
   const origin = req.headers.origin || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
@@ -54,10 +57,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(result);
 
   } catch (err: any) {
-    console.error('[send-otp api handler error]:', err);
+    console.error('[send-otp api handler error]:', typeof err === 'object' ? JSON.stringify(err) : String(err));
     const errorCode = err?.code || 'AUTH_OTP_SEND_ERROR';
     const errorMessage = err?.message || 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى';
-    const errorDetails = err?.details || String(err);
+    const errorDetails = err?.details || (typeof err === 'object' ? JSON.stringify(err) : String(err));
 
     return res.status(400).json({
       success: false,
