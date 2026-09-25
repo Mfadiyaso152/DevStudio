@@ -272,11 +272,10 @@ export async function sendOtpService(rawEmail: string): Promise<{
   const isResendConfigured = isValidResendApiKey(rawResendKey);
   
   let rawFrom = cleanEnv(process.env.RESEND_FROM_EMAIL);
-  // Auto-migrate old domain dev.wathiq.site to the active production domain studio.wathiq.site
   if (!rawFrom || rawFrom.includes('dev.wathiq.site')) {
     rawFrom = rawFrom 
-      ? rawFrom.replace(/dev\.wathiq\.site/g, 'studio.wathiq.site') 
-      : 'DevStudio <no-reply@studio.wathiq.site>';
+      ? rawFrom.replace(/dev\.wathiq\.site/g, 'fstudio.wathiq.site') 
+      : 'DevStudio <no-reply@fstudio.wathiq.site>';
   }
   const fromEmail = rawFrom;
   
@@ -353,42 +352,28 @@ export async function sendOtpService(rawEmail: string): Promise<{
         }
       };
 
-      const result = await dispatchEmail(fromEmail);
-      if (result.ok && result.data?.id) {
-        console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Email sent successfully (id: ${result.data.id}, status: ${result.status})`);
-      } else {
-        const errorName = result.data?.name || 'UnknownError';
-        const errorMessage = result.data?.message || JSON.stringify(result.data);
-        console.warn(`[STAGE: RESEND_REQUEST_FAILED] Status: ${result.status}, Name: ${errorName}, Message: ${errorMessage}`);
+      // Candidate senders to try in order of priority
+      const candidateSenders = [
+        fromEmail,
+        'DevStudio <no-reply@fstudio.wathiq.site>',
+        'DevStudio <no-reply@studio.wathiq.site>',
+        'DevStudio <no-reply@wathiq.site>',
+        'DevStudio <onboarding@resend.dev>'
+      ];
 
-        // If domain is unverified or failed, attempt apex domain fallback
-        if (fromEmail.includes('studio.wathiq.site')) {
-          try {
-            console.log(`[STAGE: RESEND_RETRY_APEX] Attempting sender DevStudio <no-reply@wathiq.site>`);
-            const apexResult = await dispatchEmail('DevStudio <no-reply@wathiq.site>');
-            if (apexResult.ok && apexResult.data?.id) {
-              console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Apex domain email sent successfully (id: ${apexResult.data.id})`);
-            } else {
-              console.warn(`[STAGE: RESEND_APEX_FAILED] Status: ${apexResult.status}, Message: ${apexResult.data?.message || ''}`);
-            }
-          } catch (apexErr: any) {
-            console.warn(`[STAGE: RESEND_APEX_ERROR] ${apexErr?.message || apexErr}`);
-          }
-        }
+      // Remove duplicate senders
+      const uniqueSenders = Array.from(new Set(candidateSenders));
+      let sentSuccess = false;
 
-        // Test fallback for Resend sandbox testing
-        if (!fromEmail.includes('resend.dev')) {
-          try {
-            console.log(`[STAGE: RESEND_RETRY_FALLBACK] Attempting fallback sender onboarding@resend.dev`);
-            const fallbackResult = await dispatchEmail('DevStudio <onboarding@resend.dev>');
-            if (fallbackResult.ok && fallbackResult.data?.id) {
-              console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Fallback sent successfully (id: ${fallbackResult.data.id})`);
-            } else {
-              console.warn(`[STAGE: RESEND_FALLBACK_FAILED] Status: ${fallbackResult.status}, Message: ${fallbackResult.data?.message || ''}`);
-            }
-          } catch (fbErr: any) {
-            console.warn(`[STAGE: RESEND_FALLBACK_ERROR] ${fbErr?.message || fbErr}`);
-          }
+      for (const sender of uniqueSenders) {
+        if (sentSuccess) break;
+        const result = await dispatchEmail(sender);
+        if (result.ok && result.data?.id) {
+          console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Email sent successfully via ${sender} (id: ${result.data.id})`);
+          sentSuccess = true;
+          break;
+        } else {
+          console.warn(`[STAGE: RESEND_TRY_FAILED] Sender ${sender} returned status ${result.status}: ${JSON.stringify(result.data)}`);
         }
       }
     } catch (resendErr: any) {

@@ -324,20 +324,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       let data: any = null;
+      let rawText = '';
       try {
-        const rawText = await res.text();
+        rawText = await res.text();
         data = rawText ? JSON.parse(rawText) : {};
       } catch {
-        throw new Error(`استجابة غير صالحة من الخادم (${res.status})`);
+        if (rawText && rawText.includes('A server error has occurred')) {
+          throw new Error('حدث خطأ في استجابة خادم البريد (500)، يرجى التأكد من مفاتيح RESEND_API_KEY أو المحاولة مجدداً.');
+        }
+        throw new Error(`استجابة غير صالحة من الخادم (${res.status}): ${rawText.slice(0, 120)}`);
       }
 
       if (!res.ok || !data?.success) {
-        const rawErr = data?.error || data?.message;
+        const rawErr = data?.error || data?.details || data?.message;
+        const codeSuffix = data?.code ? ` [${data.code}]` : '';
         const errMsg = typeof rawErr === 'string'
-          ? rawErr
+          ? `${rawErr}${codeSuffix}`
           : (typeof rawErr?.message === 'string'
-              ? rawErr.message
-              : 'فشل إرسال رمز التحقق، يرجى المحاولة مرة أخرى');
+              ? `${rawErr.message}${codeSuffix}`
+              : `فشل إرسال رمز التحقق (${res.status})${codeSuffix}`);
         throw new Error(errMsg);
       }
 

@@ -51,12 +51,15 @@ import { useAuth } from '../context/AuthContext';
 import { compressImageFile } from '../lib/imageUtils';
 
 export const AdminPage: React.FC = () => {
-  const { user, logout, sendOtp, verifyOtp } = useAuth();
+  const { user, logout, sendOtp } = useAuth();
   
   // Master Admin check
-  const isMasterAdmin = user?.email?.toLowerCase() === 'mfb.15@icloud.com' || 
-                        user?.email?.toLowerCase() === 'mfb-15@hotmail.com' || 
-                        user?.role === 'admin';
+  const isMasterAdmin = 
+    user?.email?.toLowerCase() === 'mfb.15@icloud.com' || 
+    user?.email?.toLowerCase() === 'mfb-15@hotmail.com' || 
+    user?.email?.toLowerCase() === 'mfb.15.f@gmail.com' || 
+    user?.role === 'admin' ||
+    user?.role === 'staff';
 
   // Active Tab for Admin Navigation
   const [activeTab, setActiveTab] = useState<'home' | 'requests' | 'payments' | 'portfolio' | 'staff'>('home');
@@ -306,9 +309,9 @@ export const AdminPage: React.FC = () => {
   };
 
   const handleDeletePortfolio = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذا المشروع من المعرض؟')) return;
     try {
       await deletePortfolioProject(id);
+      setPortfolioList(prev => prev.filter(p => p.id !== id));
       showToast('تم حذف المشروع من المعرض بنجاح');
     } catch (err: any) {
       showToast(err.message || 'فشل حذف المشروع');
@@ -343,7 +346,7 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  // Step 2: Verify OTP and Add Staff Member
+  // Step 2: Verify OTP and Add Staff Member (without modifying the current admin's logged-in session)
   const handleVerifyAndAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = staffEmail.trim().toLowerCase();
@@ -358,11 +361,30 @@ export const AdminPage: React.FC = () => {
     setStaffErrorMsg('');
 
     try {
-      // 1. Verify OTP with server API
-      await verifyOtp(cleanEmail, cleanOtp);
+      // 1. Verify OTP with server API directly (does NOT log out the current admin)
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+      });
+
+      let data: any = null;
+      try {
+        const rawText = await res.text();
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error(`استجابة غير صالحة من الخادم (${res.status})`);
+      }
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || data?.message || 'رمز التحقق غير صحيح أو منتهي الصلاحية');
+      }
 
       // 2. Add staff member to database & grant full admin permissions
-      await addStaffMember({
+      const newStaff = await addStaffMember({
         fullName: staffFullName.trim() || cleanEmail.split('@')[0],
         email: cleanEmail,
         phone: '',
@@ -372,6 +394,9 @@ export const AdminPage: React.FC = () => {
         status: 'active',
         assignedProjectsCount: 0
       });
+
+      // Update local state immediately
+      setStaffList(prev => [newStaff, ...prev.filter(s => s.email.toLowerCase() !== cleanEmail)]);
 
       showToast(`تم التحقق من الرمز وتعيين ${cleanEmail} كموظف بصلاحيات كاملة!`);
       setIsAddStaffOpen(false);
@@ -390,9 +415,9 @@ export const AdminPage: React.FC = () => {
 
   // Handle Delete Staff
   const handleDeleteStaff = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من إلغاء صلاحيات هذا الموظف وإعادته لحساب عميل؟')) return;
     try {
       await deleteStaffMember(id);
+      setStaffList(prev => prev.filter(s => s.id !== id));
       showToast('تم إلغاء صلاحيات الموظف بنجاح');
     } catch (err: any) {
       showToast(err.message || 'فشل إلغاء صلاحيات الموظف');
@@ -1010,9 +1035,28 @@ export const AdminPage: React.FC = () => {
 
       </div>
 
-      {/* FLOATING GLASS BOTTOM NAVIGATION BAR FOR ADMIN */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 font-['Tajawal',sans-serif]">
-        <nav className="bg-white/80 backdrop-blur-2xl border border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.15)] rounded-full px-6 py-3 flex items-center justify-center gap-6 sm:gap-8 transition-all">
+      {/* FLOATING GLASS BOTTOM NAVIGATION BAR FOR ADMIN & STAFF (ICON ONLY WITH SPRING PILL) */}
+      <div 
+        className="fixed bottom-4 sm:bottom-6 inset-x-0 z-50 flex justify-center items-center px-4 pointer-events-none select-none font-['Tajawal',sans-serif]"
+        dir="rtl"
+        style={{
+          paddingBottom: 'max(0px, env(safe-area-inset-bottom))',
+        }}
+      >
+        <motion.nav 
+          initial={{ y: 60, opacity: 0, scale: 0.92 }}
+          animate={{ y: 0, opacity: 1, scale: 1 }}
+          transition={{
+            type: "spring",
+            stiffness: 400,
+            damping: 30,
+            mass: 0.8
+          }}
+          className="pointer-events-auto relative flex items-center gap-2 sm:gap-3 p-1.5 bg-slate-900/80 backdrop-blur-3xl border border-white/20 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.12)_inset] rounded-full ring-1 ring-black/40"
+        >
+          {/* Subtle Specular Top Highlight (iOS style) */}
+          <div className="absolute inset-x-6 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent pointer-events-none" />
+
           {[
             { id: 'home', label: 'الرئيسية', icon: Home },
             { id: 'requests', label: 'الطلبات', icon: FileText },
@@ -1023,24 +1067,54 @@ export const AdminPage: React.FC = () => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
-              <button
+              <motion.button
                 key={item.id}
                 onClick={() => setActiveTab(item.id as any)}
+                whileTap={{ scale: 0.86 }}
+                whileHover={{ scale: 1.08 }}
+                transition={{ type: "spring", stiffness: 500, damping: 28 }}
                 title={item.label}
-                className={`p-2.5 rounded-full transition-all cursor-pointer relative ${
-                  isActive
-                    ? 'bg-indigo-600 text-white scale-110 shadow-lg shadow-indigo-200'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                className={`relative flex items-center justify-center p-3 sm:p-3.5 rounded-full cursor-pointer transition-colors duration-200 outline-none ${
+                  isActive ? 'text-white' : 'text-slate-400 hover:text-slate-200'
                 }`}
+                role="tab"
+                aria-selected={isActive}
               >
-                <Icon className="w-5 h-5" />
+                {/* Sliding Active Pill Background with Spring Physics */}
                 {isActive && (
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                  <motion.div
+                    layoutId="admin-nav-active-pill"
+                    className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 shadow-[0_4px_20px_rgba(99,102,241,0.5),0_0_0_1px_rgba(255,255,255,0.3)_inset]"
+                    transition={{
+                      type: "spring",
+                      stiffness: 480,
+                      damping: 34,
+                      mass: 0.75,
+                    }}
+                  />
                 )}
-              </button>
+
+                {/* Icon Container with micro-scale and spring on active */}
+                <motion.div
+                  className="relative z-10 flex items-center justify-center"
+                  animate={isActive ? { scale: 1.15, y: -1 } : { scale: 1, y: 0 }}
+                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
+                >
+                  <Icon className={`w-5 h-5 transition-colors duration-200 ${isActive ? 'text-white drop-shadow-[0_2px_8px_rgba(255,255,255,0.4)]' : 'text-slate-400'}`} />
+                </motion.div>
+
+                {/* Glowing Active Indicator Dot underneath */}
+                {isActive && (
+                  <motion.span
+                    layoutId="admin-nav-active-dot"
+                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-cyan-300 shadow-[0_0_8px_#67e8f9]"
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                  />
+                )}
+              </motion.button>
             );
           })}
-        </nav>
+        </motion.nav>
       </div>
 
       {/* MODAL 2: ADD PAYMENT DUE FOR CLIENT */}

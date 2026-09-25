@@ -87,11 +87,22 @@ export const AuthPage: React.FC<{ navigate: (path: string) => void }> = ({ navig
 
   const formatErrorMessage = (err: any, fallback: string): string => {
     if (!err) return fallback;
-    if (typeof err === 'string' && err !== '[object Object]') return err;
-    if (typeof err.message === 'string' && err.message !== '[object Object]') return err.message;
-    if (typeof err.error === 'string') return err.error;
-    if (typeof err.error?.message === 'string') return err.error.message;
-    return fallback;
+    let msg = '';
+    if (typeof err === 'string') msg = err;
+    else if (typeof err.message === 'string') msg = err.message;
+    else if (typeof err.error === 'string') msg = err.error;
+    else if (typeof err.error?.message === 'string') msg = err.error.message;
+    else if (typeof err.details === 'string') msg = err.details;
+
+    if (!msg || msg === '[object Object]' || msg.includes('<!DOCTYPE') || msg.includes('<html')) {
+      return fallback;
+    }
+
+    if (msg.includes('A server error has occurred') || msg.includes('Internal Server Error')) {
+      return 'تعذر إرسال رمز التحقق بسبب تعذر الاتصال بمزود البريد الإلكتروني، يرجى التأكد من مفتاح RESEND_API_KEY أو المحاولة مجدداً.';
+    }
+
+    return msg;
   };
 
   // Start Cooldown timer
