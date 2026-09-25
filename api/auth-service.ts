@@ -10,11 +10,10 @@ const DEFAULT_FIREBASE_CONFIG = {
   firestoreDatabaseId: 'ai-studio-b33db464-7b86-419f-9183-4f6efefd96f6'
 };
 
-// In-memory OTP cache as fast fallback & rate-limiter
+// In-memory OTP cache as fast fallback & rate-limiter (Never store plain OTP)
 interface OtpRecord {
   email: string;
   otpHash: string;
-  plainOtp?: string;
   attempts: number;
   maxAttempts: number;
   createdAt: number;
@@ -23,6 +22,18 @@ interface OtpRecord {
 }
 
 const otpMemoryStore = new Map<string, OtpRecord>();
+
+export function cleanEnv(val?: string): string {
+  if (!val) return '';
+  let cleaned = val.trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.substring(1, cleaned.length - 1).trim();
+  }
+  return cleaned;
+}
 
 export function normalizeInputDigits(str: string): string {
   if (!str) return '';
@@ -38,15 +49,7 @@ export function normalizeInputDigits(str: string): string {
  */
 function formatPrivateKey(key?: string): string | undefined {
   if (!key) return undefined;
-  let formatted = key.trim();
-  
-  // Remove wrapping double or single quotes if present
-  if (
-    (formatted.startsWith('"') && formatted.endsWith('"')) ||
-    (formatted.startsWith("'") && formatted.endsWith("'"))
-  ) {
-    formatted = formatted.substring(1, formatted.length - 1);
-  }
+  let formatted = cleanEnv(key);
   
   // Replace literal \n with real newline characters
   formatted = formatted.replace(/\\n/g, '\n');
@@ -58,10 +61,25 @@ function formatPrivateKey(key?: string): string | undefined {
 
 function isValidResendApiKey(key?: string): boolean {
   if (!key) return false;
-  const k = key.trim();
+  const k = cleanEnv(key);
   if (!k.startsWith('re_')) return false;
-  if (k.includes('xxxx') || k.includes('your_') || k.includes('example') || k.length < 24) return false;
+  if (k.includes('xxxx') || k.includes('your_') || k.includes('example') || k.length < 20) return false;
   return true;
+}
+
+/**
+ * Timing-safe string comparison to prevent timing attacks
+ */
+function safeCompareHash(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  try {
+    const bufA = Buffer.from(a, 'hex');
+    const bufB = Buffer.from(b, 'hex');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -71,16 +89,17 @@ export function hasValidServiceAccount(): boolean {
   const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_SERVICE_ACCOUNT;
   if (serviceAccountKey) {
     try {
-      const parsed = typeof serviceAccountKey === 'string' && serviceAccountKey.trim().startsWith('{')
-        ? JSON.parse(serviceAccountKey)
-        : JSON.parse(Buffer.from(serviceAccountKey, 'base64').toString('utf-8'));
+      const raw = cleanEnv(serviceAccountKey);
+      const parsed = raw.startsWith('{')
+        ? JSON.parse(raw)
+        : JSON.parse(Buffer.from(raw, 'base64').toString('utf-8'));
       if (parsed.private_key && parsed.client_email) return true;
     } catch {}
   }
 
   const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
   const privateKey = formatPrivateKey(rawPrivateKey);
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const clientEmail = cleanEnv(process.env.FIREBASE_CLIENT_EMAIL);
 
   if (privateKey && privateKey.includes('BEGIN PRIVATE KEY') && clientEmail && clientEmail.includes('@') && !clientEmail.includes('example.com')) {
     return true;
@@ -101,15 +120,16 @@ export function initFirebaseAdmin(): App | null {
   const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_SERVICE_ACCOUNT;
   const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
   const privateKey = formatPrivateKey(rawPrivateKey);
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
-  const projectId = process.env.FIREBASE_PROJECT_ID?.trim() || DEFAULT_FIREBASE_CONFIG.projectId || 'dev-studi';
+  const clientEmail = cleanEnv(process.env.FIREBASE_CLIENT_EMAIL);
+  const projectId = cleanEnv(process.env.FIREBASE_PROJECT_ID) || DEFAULT_FIREBASE_CONFIG.projectId;
 
   try {
     if (serviceAccountKey) {
       try {
-        const parsed = typeof serviceAccountKey === 'string' && serviceAccountKey.trim().startsWith('{')
-          ? JSON.parse(serviceAccountKey)
-          : JSON.parse(Buffer.from(serviceAccountKey, 'base64').toString('utf-8'));
+        const raw = cleanEnv(serviceAccountKey);
+        const parsed = raw.startsWith('{')
+          ? JSON.parse(raw)
+          : JSON.parse(Buffer.from(raw, 'base64').toString('utf-8'));
         
         if (parsed.private_key && parsed.client_email) {
           return initializeApp({
@@ -165,16 +185,17 @@ function getFirestoreInstance() {
 
 // SHA-256 Hash with salt
 export function hashOtp(email: string, otp: string): string {
-  const salt = process.env.OTP_SALT || 'devstudio_secure_otp_salt_2026';
+  const salt = cleanEnv(process.env.OTP_SALT) || 'devstudio_secure_otp_salt_2026';
   return crypto
     .createHash('sha256')
     .update(`${email.toLowerCase().trim()}_${otp.trim()}_${salt}`)
     .digest('hex');
 }
 
-// Generate random 6-digit numeric OTP
+// Generate random 6-digit numeric OTP (cryptographically secure)
 export function generateNumericOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  const num = crypto.randomInt(100000, 1000000);
+  return num.toString();
 }
 
 /**
@@ -191,6 +212,8 @@ export async function sendOtpService(rawEmail: string): Promise<{
   email: string;
 }> {
   const email = (rawEmail || '').trim().toLowerCase();
+  console.log(`[STAGE: SEND_OTP_REQUEST_RECEIVED] Email: ${email}`);
+
   if (!email || !email.includes('@')) {
     throw new Error('البريد الإلكتروني غير صالح');
   }
@@ -207,12 +230,12 @@ export async function sendOtpService(rawEmail: string): Promise<{
   const otp = generateNumericOtp();
   const otpHash = hashOtp(email, otp);
   const expiresAt = now + 10 * 60 * 1000; // 10 minutes
+  console.log(`[STAGE: OTP_GENERATED] Hash created, expiration set to 10 minutes`);
 
-  // Save to Memory
+  // Save to Memory Store (only hash, attempts, expiry, used)
   otpMemoryStore.set(email, {
     email,
     otpHash,
-    plainOtp: otp,
     attempts: 0,
     maxAttempts: 5,
     createdAt: now,
@@ -220,7 +243,7 @@ export async function sendOtpService(rawEmail: string): Promise<{
     used: false,
   });
 
-  // Save to Firestore in 'emailOtps' collection
+  // Save to Firestore in 'emailOtps' collection (ONLY store hash, never plain OTP)
   try {
     const db = getFirestoreInstance();
     if (db) {
@@ -234,17 +257,30 @@ export async function sendOtpService(rawEmail: string): Promise<{
         expiresAt: new Date(expiresAt).toISOString(),
         used: false,
       });
+      console.log(`[STAGE: FIRESTORE_WRITE_SUCCESS] Hash saved in emailOtps collection`);
+    } else {
+      console.log(`[STAGE: FIRESTORE_WRITE_SKIPPED] In-memory security store active`);
     }
   } catch (dbErr: any) {
-    console.warn('[Firestore write skipped for OTP - memory store active]:', dbErr?.message || dbErr);
+    console.warn(`[STAGE: FIRESTORE_WRITE_FAILED] ${dbErr?.message || dbErr}`);
   }
 
-  // Send Email via Resend with exact sender: DevStudio <no-reply@studio.wathiq.site>
-  const rawResendKey = (process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || '').trim();
+  // Resend Configuration & Dispatch
+  const rawResendKey = cleanEnv(process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY);
   const isResendConfigured = isValidResendApiKey(rawResendKey);
-  const fromEmail = (process.env.RESEND_FROM_EMAIL || 'DevStudio <no-reply@studio.wathiq.site>').trim();
+  
+  let rawFrom = cleanEnv(process.env.RESEND_FROM_EMAIL);
+  // Auto-migrate old domain dev.wathiq.site to the active production domain studio.wathiq.site
+  if (!rawFrom || rawFrom.includes('dev.wathiq.site')) {
+    rawFrom = rawFrom 
+      ? rawFrom.replace(/dev\.wathiq\.site/g, 'studio.wathiq.site') 
+      : 'DevStudio <no-reply@studio.wathiq.site>';
+  }
+  const fromEmail = rawFrom;
   
   if (isResendConfigured && rawResendKey) {
+    console.log(`[STAGE: RESEND_REQUEST_STARTED] Sender: ${fromEmail}, Recipient: ${email}, KeyConfigured: true`);
+    
     try {
       const emailHtml = `
       <!DOCTYPE html>
@@ -308,25 +344,50 @@ export async function sendOtpService(rawEmail: string): Promise<{
 
       const result = await dispatchEmail(fromEmail);
       if (result.ok && result.data?.id) {
-        console.info(`[Resend] OTP email sent successfully to ${email} (id: ${result.data.id})`);
+        console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Email sent successfully (id: ${result.data.id}, status: ${result.status})`);
       } else {
-        // If domain is unverified or failed, attempt fallback to onboarding@resend.dev
+        const errorName = result.data?.name || 'UnknownError';
+        const errorMessage = result.data?.message || JSON.stringify(result.data);
+        console.warn(`[STAGE: RESEND_REQUEST_FAILED] Status: ${result.status}, Name: ${errorName}, Message: ${errorMessage}`);
+
+        // If domain is unverified or failed, attempt apex domain fallback
+        if (fromEmail.includes('studio.wathiq.site')) {
+          try {
+            console.log(`[STAGE: RESEND_RETRY_APEX] Attempting sender DevStudio <no-reply@wathiq.site>`);
+            const apexResult = await dispatchEmail('DevStudio <no-reply@wathiq.site>');
+            if (apexResult.ok && apexResult.data?.id) {
+              console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Apex domain email sent successfully (id: ${apexResult.data.id})`);
+            } else {
+              console.warn(`[STAGE: RESEND_APEX_FAILED] Status: ${apexResult.status}, Message: ${apexResult.data?.message || ''}`);
+            }
+          } catch (apexErr: any) {
+            console.warn(`[STAGE: RESEND_APEX_ERROR] ${apexErr?.message || apexErr}`);
+          }
+        }
+
+        // Test fallback for Resend sandbox testing
         if (!fromEmail.includes('resend.dev')) {
           try {
+            console.log(`[STAGE: RESEND_RETRY_FALLBACK] Attempting fallback sender onboarding@resend.dev`);
             const fallbackResult = await dispatchEmail('DevStudio <onboarding@resend.dev>');
-            if (fallbackResult.ok) {
-              console.info(`[Resend Fallback] OTP email sent via onboarding@resend.dev to ${email}`);
+            if (fallbackResult.ok && fallbackResult.data?.id) {
+              console.log(`[STAGE: RESEND_REQUEST_SUCCESS] Fallback sent successfully (id: ${fallbackResult.data.id})`);
+            } else {
+              console.warn(`[STAGE: RESEND_FALLBACK_FAILED] Status: ${fallbackResult.status}, Message: ${fallbackResult.data?.message || ''}`);
             }
-          } catch {}
+          } catch (fbErr: any) {
+            console.warn(`[STAGE: RESEND_FALLBACK_ERROR] ${fbErr?.message || fbErr}`);
+          }
         }
       }
     } catch (resendErr: any) {
-      console.info('[Resend notice]:', resendErr?.message || 'Email delivery handled gracefully');
+      console.warn(`[STAGE: RESEND_REQUEST_FAILED] Network / Exception: ${resendErr?.message || resendErr}`);
     }
+  } else {
+    console.log(`[STAGE: RESEND_SKIPPED] RESEND_API_KEY is not set or placeholder.`);
   }
 
-  // Always log OTP for development / testing visibility
-  console.info(`[DevStudio OTP Code] Verification code for ${email}: ${otp}`);
+  console.log(`[STAGE: OTP_READY] OTP cycle complete for ${email}`);
 
   return {
     success: true,
@@ -338,7 +399,15 @@ export async function sendOtpService(rawEmail: string): Promise<{
 
 /**
  * Verify OTP Service
- * Collection in Firestore: 'emailOtps'
+ * Strictly validates OTP hash server-side
+ * No master codes, no bypasses, no static codes (000000, 123456, etc.)
+ * Enforces:
+ * 1. Non-empty 6-digit numeric input
+ * 2. Unused status
+ * 3. Expiration within 10 minutes
+ * 4. Maximum 5 failed attempts
+ * 5. Cryptographic hash comparison with timingSafeEqual
+ * 6. Immediate invalidation upon success
  */
 export async function verifyOtpService(rawEmail: string, rawOtp: string): Promise<{
   success: boolean;
@@ -351,112 +420,108 @@ export async function verifyOtpService(rawEmail: string, rawOtp: string): Promis
   const email = (rawEmail || '').trim().toLowerCase();
   const otp = normalizeInputDigits(rawOtp);
 
-  if (!email || !otp || otp.length !== 6) {
-    throw new Error('يرجى إدخال البريد الإلكتروني ورمز التحقق المكون من 6 أرقام');
+  if (!email || !email.includes('@') || !otp || otp.length !== 6) {
+    throw new Error('رمز التحقق غير صحيح أو منتهي الصلاحية');
   }
 
   const now = Date.now();
   let record: OtpRecord | null = null;
+  let isFromFirestore = false;
 
-  // Check Firestore 'emailOtps' collection
+  // 1. Fetch OTP record from Firestore 'emailOtps' collection
   try {
     const db = getFirestoreInstance();
     if (db) {
       const docSnap = await db.collection('emailOtps').doc(email).get();
       if (docSnap.exists) {
         const data = docSnap.data() as any;
-        if (data) {
+        if (data && data.otpHash) {
           record = {
             email: data.email || email,
-            otpHash: data.otpHash || data.hashedOtp || '',
-            plainOtp: data.plainOtp || '',
+            otpHash: data.otpHash,
             attempts: data.attempts || 0,
             maxAttempts: data.maxAttempts || 5,
             createdAt: data.createdAt ? new Date(data.createdAt).getTime() : now,
             expiresAt: data.expiresAt ? new Date(data.expiresAt).getTime() : now,
             used: !!data.used,
           };
+          isFromFirestore = true;
         }
       }
     }
   } catch (err: any) {
-    console.warn('[Firestore lookup in emailOtps notice]:', err?.message || err);
+    console.warn('[Firestore lookup in emailOtps]:', err?.message || err);
   }
 
-  // Fallback to Memory Store
-  const memRecord = otpMemoryStore.get(email);
-  if (!record && memRecord) {
-    record = memRecord;
-  } else if (record && memRecord && memRecord.plainOtp) {
-    record.plainOtp = memRecord.plainOtp;
+  // Fallback to Memory Store if Firestore record not found
+  if (!record) {
+    const memRecord = otpMemoryStore.get(email);
+    if (memRecord) {
+      record = memRecord;
+    }
   }
 
-  // Universal Dev / Master Code (e.g. 123456, 999999, 000000) for testing & administrative access
-  const isMasterCode = otp === '123456' || otp === '999999' || otp === '000000';
-
-  if (!record && !isMasterCode) {
-    throw new Error('لم يتم العثور على رمز تحقق مرسل لهذا البريد. يرجى طلب رمز جديد.');
+  // If no active OTP record found for this email -> Reject
+  if (!record || !record.otpHash) {
+    throw new Error('رمز التحقق غير صحيح أو منتهي الصلاحية');
   }
 
-  if (record && record.used && !isMasterCode) {
+  // Check if already used -> Reject
+  if (record.used) {
     throw new Error('تم استخدام هذا الرمز مسبقاً. يرجى طلب رمز جديد.');
   }
 
-  if (record && now > record.expiresAt && !isMasterCode) {
+  // Check expiration (10 minutes) -> Reject
+  if (now > record.expiresAt) {
     throw new Error('انتهت صلاحية رمز التحقق (10 دقائق). يرجى طلب رمز جديد.');
   }
 
-  if (record && record.attempts >= record.maxAttempts && !isMasterCode) {
-    throw new Error('تجاوزت الحد الأقصى للمحاولات الخاطئة (5 محاولات). يرجى طلب رمز جديد.');
+  // Check maximum attempts (5 attempts limit) -> Reject
+  if (record.attempts >= record.maxAttempts) {
+    throw new Error('تجاوزت الحد الأقصى للمحاولات الخاطئة. تم إبطال الرمز، يرجى طلب رمز جديد.');
   }
 
-  // Compare Hashes or plain OTP
+  // 2. Cryptographic Hash Comparison (STRICT MATCH ONLY)
   const calculatedHash = hashOtp(email, otp);
-  const isValid = isMasterCode || (record && (calculatedHash === record.otpHash || (record.plainOtp && otp === record.plainOtp)));
+  const isValid = safeCompareHash(calculatedHash, record.otpHash);
 
   if (!isValid) {
-    const currentAttempts = record ? record.attempts : 0;
-    const maxAttempts = record ? record.maxAttempts : 5;
-    const newAttempts = currentAttempts + 1;
-
-    if (record) {
-      record.attempts = newAttempts;
-      otpMemoryStore.set(email, record);
-
-      try {
-        const db = getFirestoreInstance();
-        if (db) {
-          await db.collection('emailOtps').doc(email).update({
-            attempts: newAttempts,
-          });
-        }
-      } catch {}
-    }
-
-    const remaining = maxAttempts - newAttempts;
-    if (remaining <= 0) {
-      throw new Error('تم استنفاد جميع المحاولات المتاحة. يرجى طلب رمز جديد.');
-    }
-    throw new Error(`رمز التحقق غير صحيح. متبقي لديك ${remaining} ${remaining === 1 ? 'محاولة' : 'محاولات'}.`);
-  }
-
-  // Mark as used
-  if (record) {
-    record.used = true;
+    // Increment failed attempts
+    const newAttempts = (record.attempts || 0) + 1;
+    record.attempts = newAttempts;
     otpMemoryStore.set(email, record);
 
     try {
       const db = getFirestoreInstance();
       if (db) {
         await db.collection('emailOtps').doc(email).update({
-          used: true,
-          verifiedAt: new Date(now).toISOString(),
+          attempts: newAttempts,
         });
       }
     } catch {}
+
+    const remaining = record.maxAttempts - newAttempts;
+    if (remaining <= 0) {
+      throw new Error('تجاوزت الحد الأقصى للمحاولات الخاطئة. تم إبطال الرمز، يرجى طلب رمز جديد.');
+    }
+    throw new Error(`رمز التحقق غير صحيح. متبقي لديك ${remaining} ${remaining === 1 ? 'محاولة' : 'محاولات'}.`);
   }
 
-  // Firebase Auth User lookup / creation and Custom Token generation (only if valid service account exists)
+  // 3. Mark as USED immediately (Cannot be reused)
+  record.used = true;
+  otpMemoryStore.set(email, record);
+
+  try {
+    const db = getFirestoreInstance();
+    if (db) {
+      await db.collection('emailOtps').doc(email).update({
+        used: true,
+        verifiedAt: new Date(now).toISOString(),
+      });
+    }
+  } catch {}
+
+  // 4. Generate UID & Firebase Custom Token ONLY after verified OTP
   const isAdminEmail = email === 'mfb.15@icloud.com' || email === 'mfb-15@hotmail.com';
   const role = isAdminEmail ? 'admin' : 'client';
   let uid = `usr_${crypto.createHash('md5').update(email).digest('hex').substring(0, 16)}`;
